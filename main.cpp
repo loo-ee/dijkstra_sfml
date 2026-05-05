@@ -19,6 +19,7 @@ void addVertexToManager(
     GraphManager& manager, std::string vertexName,
     std::vector<std::pair<std::string, int>> neighbors
 );
+void updateEdgeWeights(GraphManager& manager);
 
 int main(int argc, char* argv[]) {
     sf::RenderWindow window(sf::VideoMode(1280, 720), "Dijkstra Visualizer");
@@ -42,6 +43,7 @@ int main(int argc, char* argv[]) {
     bool vertexLoopRunning = true;
     bool isGraphFilled = true;
     bool showCursor = true;
+    bool edgeWeightsDirty = true;
 
     void (*createVertexFromUser)(GraphManager& manager, std::string& inputText) = addVertexFromUser;
     void (*addVerticesToGraph)(GraphManager& manager) = addVerticesToManager;
@@ -51,10 +53,7 @@ int main(int argc, char* argv[]) {
     sf::Vector2f oldMousePos;
 
     sf::Clock cursorClock;
-    sf::Clock delayClock;
-
-    sf::Time elapsed;
-    const sf::Time targetFrameTime = sf::seconds(1.f / 2);
+    sf::Clock calculationClock;
 
     const int userInputTextFont = 28;
     const int messageTextFont = 20;
@@ -166,6 +165,8 @@ int main(int argc, char* argv[]) {
     });
 
     addVerticesToManager(manager);
+    updateEdgeWeights(manager);
+    edgeWeightsDirty = false;
 
     while (window.isOpen()) {
         sf::Event event;
@@ -223,6 +224,7 @@ int main(int argc, char* argv[]) {
 
                         movedRect = nullptr;
                         dragging = false;
+                        edgeWeightsDirty = true;
                     }
                 }
             }
@@ -237,6 +239,7 @@ int main(int argc, char* argv[]) {
                         sf::Vector2f difference = mousePos - oldMousePos;
                         movedRect->move(difference);
                         oldMousePos = movedRect->getPosition();
+                        edgeWeightsDirty = true;
                     }
                 }
             }
@@ -263,6 +266,9 @@ int main(int argc, char* argv[]) {
         if (isCalculating && startVertex != nullptr && endVertex != nullptr) {
             if (isFirstRun) {
                 isFirstRun = false;
+                calculationClock.restart();
+                updateEdgeWeights(manager);
+                edgeWeightsDirty = false;
                 unexplored.clear();
                 explored.clear();
                 manager.resetParentVertices();
@@ -307,18 +313,14 @@ int main(int argc, char* argv[]) {
 
                     if (foundRelatedVertex != topExplored->neighbors.end()) {
                         int totalDistance = topExplored->minDistanceFromSrc + foundRelatedVertex->second;
-
-                        std::cout << "[CALCULATE " << topExplored->vertexName << " -> " << foundRelatedVertex->first << ": (" << totalDistance;
                         messageInfo = "[CALCULATE " + topExplored->vertexName + " -> " + foundRelatedVertex->first + ": (" + std::to_string(totalDistance);
 
                         if (totalDistance < (*unexploredIterator)->minDistanceFromSrc) {
-                            std::cout << " < " << (*unexploredIterator)->minDistanceFromSrc << "), UPDATING " << foundRelatedVertex->first << " COST]\n";
                             messageInfo += " < " + std::to_string((*unexploredIterator)->minDistanceFromSrc) + "), UPDATING " + foundRelatedVertex->first + " COST]";
 
                             (*unexploredIterator)->parent = topExplored;
                             (*unexploredIterator)->minDistanceFromSrc = totalDistance;
                         } else {
-                            std::cout << " > " << (*unexploredIterator)->minDistanceFromSrc << "), MAINTAIN " << foundRelatedVertex->first << " COST]\n";
                             messageInfo += " > " + std::to_string((*unexploredIterator)->minDistanceFromSrc) + "), MAINTAIN " + foundRelatedVertex->first + " COST]";
                         }
 
@@ -329,13 +331,9 @@ int main(int argc, char* argv[]) {
                         int srcPosY = srcRectForCalculating->getPosition().y;
                         int dstPosX = dstRectForCalculating->getPosition().x;
                         int dstPosY = dstRectForCalculating->getPosition().y;
-                        float length = std::sqrt(std::pow(dstPosX - srcPosX, 2) + std::pow(dstPosY - srcPosY, 2));
-
-                        std::string distanceStr = std::to_string(length).substr(0, 6);
+                        std::string distanceStr = std::to_string(foundRelatedVertex->second);
                         sf::Vector2f labelPos(srcPosX + (dstPosX - srcPosX) / 2, srcPosY + (dstPosY - srcPosY) / 2);
                         sf::VertexArray line(sf::Lines, 2);
-
-                        foundRelatedVertex->second = length;
 
                         line[0].position = sf::Vector2f(srcPosX, srcPosY);
                         line[1].position = sf::Vector2f(dstPosX, dstPosY);
@@ -429,13 +427,9 @@ int main(int argc, char* argv[]) {
                 const int labelFontSize = 20;
                 int dstPosX = dstRect->getPosition().x;
                 int dstPosY = dstRect->getPosition().y;
-                float length = std::sqrt(std::pow(dstPosX - srcPosX, 2) + std::pow(dstPosY - srcPosY, 2));
-
-                std::string distanceStr = std::to_string(length).substr(0, 6);
+                std::string distanceStr = std::to_string(currentNeighbor.second);
                 sf::Vector2f labelPos(srcPosX + (dstPosX - srcPosX) / 2, srcPosY + (dstPosY - srcPosY) / 2);
                 sf::VertexArray line(sf::Lines, 2);
-
-                currentNeighbor.second = length;
 
                 line[0].position = sf::Vector2f(srcPosX, srcPosY);
                 line[1].position = sf::Vector2f(dstPosX, dstPosY);
@@ -458,6 +452,9 @@ int main(int argc, char* argv[]) {
             if (foundDijkstraResult != explored.end()) {
                 dijkstraResultVertex = (*foundDijkstraResult);
                 Vertex* pathPtr = dijkstraResultVertex;
+                const sf::Time calculationTime = calculationClock.getElapsedTime();
+
+                std::cout << "Calculation time: " << calculationTime.asMilliseconds() << " ms\n";
 
                 while (pathPtr) {
                     messageInfo = pathPtr->vertexName + (messageInfo == "" ? "" : " -> " + messageInfo);
@@ -465,6 +462,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 messageInfo = "Path: " + messageInfo;
+                messageInfo += "\nCalculation time: " + std::to_string(calculationTime.asMilliseconds()) + " ms";
             }
         }
 
@@ -506,6 +504,12 @@ int main(int argc, char* argv[]) {
 
             tempNewLineCoords[0] = sf::Vector2f(0, 0);
             tempNewLineCoords[1] = sf::Vector2f(0, 0);
+            edgeWeightsDirty = true;
+        }
+
+        if (edgeWeightsDirty && !isCalculating) {
+            updateEdgeWeights(manager);
+            edgeWeightsDirty = false;
         }
 
         if (cursorClock.getElapsedTime().asSeconds() >= 0.5f) {
@@ -538,10 +542,6 @@ int main(int argc, char* argv[]) {
         messageText.setString(messageInfo);
         window.draw(messageText);
         window.display();
-
-        if (isCalculating && elapsed < targetFrameTime) {
-           sf::sleep(targetFrameTime - elapsed);
-        }
     }
 
     return 0;
@@ -620,4 +620,28 @@ void addVertexToManager(
     std::vector<std::pair<std::string, int>> neighbors
 ) {
     manager.createVertex(vertexName, neighbors, 10, 200);
+}
+
+void updateEdgeWeights(GraphManager& manager) {
+    std::vector<Vertex*>* vertices = manager.getVertices();
+
+    for (Vertex* sourceVertex : *vertices) {
+        const int sourceX = sourceVertex->vertexRect.getPosition().x;
+        const int sourceY = sourceVertex->vertexRect.getPosition().y;
+
+        for (std::pair<std::string, int>& neighbor : sourceVertex->neighbors) {
+            Vertex* targetVertex = manager.getOneVertex(neighbor.first);
+
+            if (targetVertex == nullptr) {
+                continue;
+            }
+
+            const int targetX = targetVertex->vertexRect.getPosition().x;
+            const int targetY = targetVertex->vertexRect.getPosition().y;
+            const int deltaX = targetX - sourceX;
+            const int deltaY = targetY - sourceY;
+
+            neighbor.second = static_cast<int>(std::round(std::sqrt((deltaX * deltaX) + (deltaY * deltaY))));
+        }
+    }
 }
