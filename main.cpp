@@ -16,6 +16,7 @@ enum class InteractionMode {
     ADD_EDGE,
     SET_START,
     SET_END,
+    SET_DIRECTION,
     DELETE_ITEM
 };
 
@@ -51,6 +52,29 @@ void drawThickLine(sf::RenderWindow& window, sf::Vector2f point1, sf::Vector2f p
     }
 
     window.draw(quad);
+}
+
+void drawArrowHead(sf::RenderWindow& window, sf::Vector2f fromPos, sf::Vector2f toPos, sf::Color color, float size = 12.f) {
+    sf::Vector2f dir = toPos - fromPos;
+    float length = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+    if (length == 0.f) return;
+
+    sf::Vector2f unitDir = dir / length;
+    sf::Vector2f tip = toPos - unitDir * (Vertex::RADIUS + 2.f);
+
+    sf::Vector2f normal(-unitDir.y, unitDir.x);
+    sf::Vector2f base = tip - unitDir * size;
+
+    sf::VertexArray triangle(sf::Triangles, 3);
+    triangle[0].position = tip;
+    triangle[1].position = base + normal * (size * 0.55f);
+    triangle[2].position = base - normal * (size * 0.55f);
+
+    for (int i = 0; i < 3; i++) {
+        triangle[i].color = color;
+    }
+
+    window.draw(triangle);
 }
 
 void drawEdgeWeightBadge(sf::RenderWindow& window, sf::Vector2f pos, int weight, const sf::Font& font, sf::Color badgeBgColor = sf::Color(30, 41, 59)) {
@@ -89,7 +113,6 @@ int main() {
 
     bool isFullscreen = false;
 
-    // Enable 8x MSAA Anti-Aliasing for crisp vector shapes
     sf::ContextSettings settings;
     settings.antialiasingLevel = 8;
 
@@ -101,7 +124,6 @@ int main() {
         std::cerr << "Warning: Could not load custom font.\n";
     }
 
-    // Disable texture smoothing for font sizes to render crisp pixel-sharp text
     for (unsigned int sz : {11, 12, 13, 14, 15, 16}) {
         const_cast<sf::Texture&>(font.getTexture(sz)).setSmooth(false);
     }
@@ -123,7 +145,8 @@ int main() {
     Vertex* draggedVertex = nullptr;
     Vertex* edgeSourceVertex = nullptr;
 
-    // View Panning and Zooming State
+    // Separate UI View and Canvas View
+    sf::View uiView;
     sf::View canvasView;
     float zoomLevel = 1.0f;
     bool isPanningCanvas = false;
@@ -133,6 +156,10 @@ int main() {
     auto updateCanvasViewport = [&]() {
         windowWidth = window.getSize().x;
         windowHeight = window.getSize().y;
+
+        // Dynamically update UI View to match physical window dimensions 1:1
+        uiView.setSize(static_cast<float>(windowWidth), static_cast<float>(windowHeight));
+        uiView.setCenter(static_cast<float>(windowWidth) / 2.f, static_cast<float>(windowHeight) / 2.f);
 
         float canvasWidth = std::max(100.f, windowWidth - SIDEBAR_WIDTH - INSPECTOR_WIDTH);
         float canvasHeight = std::max(100.f, windowHeight - PLAYBAR_HEIGHT);
@@ -177,29 +204,33 @@ int main() {
 
     // UI Buttons Initialization
     std::vector<Button*> modeButtons;
-    Button btnMove(sf::Vector2f(15.f, 50.f), sf::Vector2f(230.f, 36.f));
-    btnMove.setButtonText(font, "1. Select / Move", 14);
+    Button btnMove(sf::Vector2f(15.f, 45.f), sf::Vector2f(230.f, 32.f));
+    btnMove.setButtonText(font, "1. Select / Move", 13);
 
-    Button btnAddNode(sf::Vector2f(15.f, 92.f), sf::Vector2f(230.f, 36.f));
-    btnAddNode.setButtonText(font, "2. Add Node", 14);
+    Button btnAddNode(sf::Vector2f(15.f, 82.f), sf::Vector2f(230.f, 32.f));
+    btnAddNode.setButtonText(font, "2. Add Node", 13);
 
-    Button btnAddEdge(sf::Vector2f(15.f, 134.f), sf::Vector2f(230.f, 36.f));
-    btnAddEdge.setButtonText(font, "3. Add Edge", 14);
+    Button btnAddEdge(sf::Vector2f(15.f, 119.f), sf::Vector2f(230.f, 32.f));
+    btnAddEdge.setButtonText(font, "3. Add Edge", 13);
 
-    Button btnSetStart(sf::Vector2f(15.f, 176.f), sf::Vector2f(230.f, 36.f));
-    btnSetStart.setButtonText(font, "4. Set Start Node", 14);
+    Button btnSetStart(sf::Vector2f(15.f, 156.f), sf::Vector2f(230.f, 32.f));
+    btnSetStart.setButtonText(font, "4. Set Start Node", 13);
 
-    Button btnSetEnd(sf::Vector2f(15.f, 218.f), sf::Vector2f(230.f, 36.f));
-    btnSetEnd.setButtonText(font, "5. Set End Node", 14);
+    Button btnSetEnd(sf::Vector2f(15.f, 193.f), sf::Vector2f(230.f, 32.f));
+    btnSetEnd.setButtonText(font, "5. Set End Node", 13);
 
-    Button btnDelete(sf::Vector2f(15.f, 260.f), sf::Vector2f(230.f, 36.f));
-    btnDelete.setButtonText(font, "6. Delete Item", 14);
+    Button btnSetDirection(sf::Vector2f(15.f, 230.f), sf::Vector2f(230.f, 32.f));
+    btnSetDirection.setButtonText(font, "6. Edge Direction", 13);
+
+    Button btnDelete(sf::Vector2f(15.f, 267.f), sf::Vector2f(230.f, 32.f));
+    btnDelete.setButtonText(font, "7. Delete Item", 13);
 
     btnMove.setCallback([&]() { currentMode = InteractionMode::MOVE; });
     btnAddNode.setCallback([&]() { currentMode = InteractionMode::ADD_NODE; });
     btnAddEdge.setCallback([&]() { currentMode = InteractionMode::ADD_EDGE; });
     btnSetStart.setCallback([&]() { currentMode = InteractionMode::SET_START; });
     btnSetEnd.setCallback([&]() { currentMode = InteractionMode::SET_END; });
+    btnSetDirection.setCallback([&]() { currentMode = InteractionMode::SET_DIRECTION; });
     btnDelete.setCallback([&]() { currentMode = InteractionMode::DELETE_ITEM; });
 
     modeButtons.push_back(&btnMove);
@@ -207,6 +238,7 @@ int main() {
     modeButtons.push_back(&btnAddEdge);
     modeButtons.push_back(&btnSetStart);
     modeButtons.push_back(&btnSetEnd);
+    modeButtons.push_back(&btnSetDirection);
     modeButtons.push_back(&btnDelete);
 
     // Preset & View Control Buttons
@@ -288,7 +320,7 @@ int main() {
         isPlaying = true;
     });
 
-    // Initial Playbar Buttons with exact calculated positions
+    // Initial Playbar Buttons
     float playbarY = windowHeight - PLAYBAR_HEIGHT + 10.f;
     float playbarStartX = SIDEBAR_WIDTH + 15.f;
 
@@ -343,7 +375,7 @@ int main() {
 
     while (window.isOpen()) {
         sf::Vector2i mousePixelPos = sf::Mouse::getPosition(window);
-        sf::Vector2f uiMousePos = window.mapPixelToCoords(mousePixelPos, window.getDefaultView());
+        sf::Vector2f uiMousePos = window.mapPixelToCoords(mousePixelPos, uiView);
         sf::Vector2f canvasMousePos = window.mapPixelToCoords(mousePixelPos, canvasView);
 
         float currentCanvasWidth = std::max(100.f, window.getSize().x - SIDEBAR_WIDTH - INSPECTOR_WIDTH);
@@ -428,6 +460,15 @@ int main() {
                                 resetSolver();
                             }
                             break;
+                        case InteractionMode::SET_DIRECTION:
+                            {
+                                auto edge = manager.getEdgeAt(canvasMousePos);
+                                if (edge.first != "") {
+                                    manager.cycleEdgeDirection(edge.first, edge.second);
+                                    resetSolver();
+                                }
+                            }
+                            break;
                         case InteractionMode::DELETE_ITEM:
                             if (hitVertex) {
                                 if (hitVertex == startVertex) startVertex = nullptr;
@@ -454,7 +495,7 @@ int main() {
                     } else {
                         auto edge = manager.getEdgeAt(canvasMousePos);
                         if (edge.first != "") {
-                            manager.removeEdge(edge.first, edge.second);
+                            manager.cycleEdgeDirection(edge.first, edge.second);
                             resetSolver();
                         }
                     }
@@ -516,7 +557,6 @@ int main() {
                 }
             }
 
-            // Handle UI button events cleanly
             for (Button* btn : modeButtons) btn->handleEvent(event, window);
             btnPresetDefault.handleEvent(event, window);
             btnPresetGrid.handleEvent(event, window);
@@ -600,7 +640,7 @@ int main() {
         // A. RENDER CANVAS SCENE (World Space using canvasView)
         window.setView(canvasView);
 
-        // Draw Canvas Background rect in world space
+        // Draw Canvas Background rect
         sf::RectangleShape canvasWorldBg(sf::Vector2f(4000.f, 4000.f));
         canvasWorldBg.setOrigin(2000.f, 2000.f);
         canvasWorldBg.setPosition(canvasView.getCenter());
@@ -630,23 +670,28 @@ int main() {
         }
         window.draw(gridLines);
 
-        // Draw Edges
+        // Draw Edges & Directed Arrows
         std::vector<Vertex*>& allVertices = manager.getVertices();
         for (Vertex* u : allVertices) {
             sf::Vector2f uPos = u->getCenterPos();
             for (const auto& neighbor : u->neighbors) {
                 Vertex* v = manager.getOneVertex(neighbor.first);
                 if (!v) continue;
-                if (u->vertexName > v->vertexName) continue;
 
                 sf::Vector2f vPos = v->getCenterPos();
+                EdgeDirection dir = manager.getEdgeDirection(u->vertexName, v->vertexName);
+
+                if (dir == EdgeDirection::BOTH && u->vertexName > v->vertexName) {
+                    continue;
+                }
+
                 sf::Color edgeColor = COLOR_EDGE_DEFAULT;
                 float lineThickness = 3.f;
 
                 bool inPath = false;
                 for (size_t i = 0; i + 1 < shortestPath.size(); i++) {
                     if ((shortestPath[i] == u->vertexName && shortestPath[i + 1] == v->vertexName) ||
-                        (shortestPath[i] == v->vertexName && shortestPath[i + 1] == u->vertexName)) {
+                        (dir == EdgeDirection::BOTH && shortestPath[i] == v->vertexName && shortestPath[i + 1] == u->vertexName)) {
                         inPath = true;
                         break;
                     }
@@ -656,14 +701,22 @@ int main() {
                     edgeColor = COLOR_EDGE_PATH;
                     lineThickness = 5.f;
                 } else if ((u->vertexName == snapshot.currentNode && v->vertexName == snapshot.examiningNeighbor) ||
-                           (v->vertexName == snapshot.currentNode && u->vertexName == snapshot.examiningNeighbor)) {
+                           (dir == EdgeDirection::BOTH && v->vertexName == snapshot.currentNode && u->vertexName == snapshot.examiningNeighbor)) {
                     edgeColor = COLOR_EDGE_ACTIVE;
                     lineThickness = 5.f;
                 }
 
                 drawThickLine(window, uPos, vPos, lineThickness, edgeColor);
 
-                // Draw Edge Weight Badge
+                if (dir == EdgeDirection::FORWARD) {
+                    drawArrowHead(window, uPos, vPos, edgeColor);
+                } else if (dir == EdgeDirection::BACKWARD) {
+                    drawArrowHead(window, vPos, uPos, edgeColor);
+                } else if (dir == EdgeDirection::BOTH) {
+                    drawArrowHead(window, uPos, vPos, edgeColor);
+                    drawArrowHead(window, vPos, uPos, edgeColor);
+                }
+
                 sf::Vector2f midPos = uPos + (vPos - uPos) / 2.f;
                 sf::Color badgeBg = (edgeColor == COLOR_EDGE_PATH) ? sf::Color(6, 78, 59) :
                                     (edgeColor == COLOR_EDGE_ACTIVE) ? sf::Color(120, 53, 15) : sf::Color(30, 41, 59);
@@ -674,6 +727,7 @@ int main() {
         // Draw Rubber-Band Line
         if (currentMode == InteractionMode::ADD_EDGE && edgeSourceVertex) {
             drawThickLine(window, edgeSourceVertex->getCenterPos(), canvasMousePos, 3.f, COLOR_EDGE_ACTIVE);
+            drawArrowHead(window, edgeSourceVertex->getCenterPos(), canvasMousePos, COLOR_EDGE_ACTIVE);
         }
 
         // Draw Vertices & Labels
@@ -704,10 +758,10 @@ int main() {
             }
         }
 
-        // B. RENDER UI OVERLAY SCENE (Screen Space using Default View)
-        window.setView(window.getDefaultView());
+        // B. RENDER UI OVERLAY SCENE (Screen Space using uiView matched 1:1 to window size)
+        window.setView(uiView);
 
-        // 1. Left Sidebar Background & Divider
+        // Left Sidebar Background
         sf::RectangleShape sidebarBg(sf::Vector2f(SIDEBAR_WIDTH, static_cast<float>(windowHeight)));
         sidebarBg.setPosition(0.f, 0.f);
         sidebarBg.setFillColor(COLOR_SIDEBAR);
@@ -728,7 +782,7 @@ int main() {
             window.draw(headerText);
         };
 
-        renderHeader("MODES & GESTURES", 20.f);
+        renderHeader("MODES & GESTURES", 18.f);
         renderHeader("PRESET TEMPLATES", 310.f);
         renderHeader("VIEW & DISPLAY", 480.f);
         renderHeader("ALGORITHM SOLVER", 545.f);
@@ -742,7 +796,7 @@ int main() {
         window.draw(btnFullscreen);
         window.draw(btnSolve);
 
-        // 2. Bottom Playbar Panel
+        // Bottom Playbar Panel
         sf::RectangleShape playbarBg(sf::Vector2f(currentCanvasWidth, PLAYBAR_HEIGHT));
         playbarBg.setPosition(SIDEBAR_WIDTH, windowHeight - PLAYBAR_HEIGHT);
         playbarBg.setFillColor(COLOR_SIDEBAR);
@@ -773,7 +827,7 @@ int main() {
         stepText.setPosition(playbarXPos + 540.f, playbarYPos);
         window.draw(stepText);
 
-        // 3. Right Inspector Panel Background & Divider
+        // Right Inspector Panel Background (Positioned relative to dynamic windowWidth)
         float inspX = windowWidth - INSPECTOR_WIDTH + 15.f;
 
         sf::RectangleShape inspectorBg(sf::Vector2f(INSPECTOR_WIDTH, static_cast<float>(windowHeight)));
@@ -794,7 +848,6 @@ int main() {
         inspHeader.setPosition(inspX, 20.f);
         window.draw(inspHeader);
 
-        // Algorithm Description Message
         sf::Text msgText;
         msgText.setFont(font);
         msgText.setString(snapshot.message.empty() ? "Click 'RUN DIJKSTRA' to begin visualization." : snapshot.message);
@@ -823,7 +876,6 @@ int main() {
         msgText.setPosition(inspX, 45.f);
         window.draw(msgText);
 
-        // Distance Table
         sf::Text tableHeader;
         tableHeader.setFont(font);
         tableHeader.setString("DISTANCE TABLE");
@@ -867,7 +919,6 @@ int main() {
             rowY += 19.f;
         }
 
-        // Shortest Path Summary
         if (snapshot.isFinished) {
             sf::Text resHeader;
             resHeader.setFont(font);
@@ -895,10 +946,9 @@ int main() {
             window.draw(resText);
         }
 
-        // Controls Hint Footer (Placed cleanly at the absolute bottom of Inspector Panel)
         sf::Text helpText;
         helpText.setFont(font);
-        helpText.setString("Scroll: Zoom | Drag/Middle: Pan\nF11: Fullscreen | Home: Reset View");
+        helpText.setString("Scroll: Zoom | Drag/Middle: Pan\nF11: Fullscreen | Right-Click: Toggle Dir");
         helpText.setCharacterSize(11);
         helpText.setFillColor(COLOR_MUTED);
         helpText.setPosition(inspX, windowHeight - 45.f);

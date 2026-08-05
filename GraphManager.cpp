@@ -64,11 +64,16 @@ Vertex* GraphManager::getVertexAt(sf::Vector2f pos) {
 }
 
 std::pair<std::string, std::string> GraphManager::getEdgeAt(sf::Vector2f pos, float threshold) {
-    for (Vertex* u : vertices) {
+    for (size_t i = 0; i < vertices.size(); i++) {
+        Vertex* u = vertices[i];
         sf::Vector2f uPos = u->getCenterPos();
-        for (const auto& neighbor : u->neighbors) {
-            Vertex* v = getOneVertex(neighbor.first);
-            if (!v) continue;
+        for (size_t j = i + 1; j < vertices.size(); j++) {
+            Vertex* v = vertices[j];
+
+            if (!hasEdge(u->vertexName, v->vertexName) && !hasEdge(v->vertexName, u->vertexName)) {
+                continue;
+            }
+
             sf::Vector2f vPos = v->getCenterPos();
 
             // Distance from point pos to segment uPos-vPos
@@ -82,7 +87,11 @@ std::pair<std::string, std::string> GraphManager::getEdgeAt(sf::Vector2f pos, fl
             float dist = std::sqrt(diff.x * diff.x + diff.y * diff.y);
 
             if (dist <= threshold) {
-                return {u->vertexName, v->vertexName};
+                if (u->vertexName < v->vertexName) {
+                    return {u->vertexName, v->vertexName};
+                } else {
+                    return {v->vertexName, u->vertexName};
+                }
             }
         }
     }
@@ -98,6 +107,57 @@ bool GraphManager::hasEdge(const std::string& uName, const std::string& vName) c
         }
     }
     return false;
+}
+
+EdgeDirection GraphManager::getEdgeDirection(const std::string& uName, const std::string& vName) const {
+    bool uHasV = hasEdge(uName, vName);
+    bool vHasU = hasEdge(vName, uName);
+    if (uHasV && vHasU) return EdgeDirection::BOTH;
+    if (uHasV && !vHasU) return EdgeDirection::FORWARD;
+    if (!uHasV && vHasU) return EdgeDirection::BACKWARD;
+    return EdgeDirection::NONE;
+}
+
+void GraphManager::setEdgeDirection(const std::string& uName, const std::string& vName, EdgeDirection dir) {
+    Vertex* u = getOneVertex(uName);
+    Vertex* v = getOneVertex(vName);
+    if (!u || !v) return;
+
+    auto removeOneWay = [](Vertex* node, const std::string& target) {
+        node->neighbors.erase(
+            std::remove_if(node->neighbors.begin(), node->neighbors.end(),
+                [&target](const std::pair<std::string, int>& pair) { return pair.first == target; }),
+            node->neighbors.end()
+        );
+    };
+
+    removeOneWay(u, vName);
+    removeOneWay(v, uName);
+
+    if (dir == EdgeDirection::BOTH) {
+        u->neighbors.push_back({vName, 0});
+        v->neighbors.push_back({uName, 0});
+    } else if (dir == EdgeDirection::FORWARD) {
+        u->neighbors.push_back({vName, 0});
+    } else if (dir == EdgeDirection::BACKWARD) {
+        v->neighbors.push_back({uName, 0});
+    }
+
+    updateEdgeWeights();
+}
+
+void GraphManager::cycleEdgeDirection(const std::string& uName, const std::string& vName) {
+    std::string first = uName < vName ? uName : vName;
+    std::string second = uName < vName ? vName : uName;
+
+    EdgeDirection current = getEdgeDirection(first, second);
+    if (current == EdgeDirection::BOTH) {
+        setEdgeDirection(first, second, EdgeDirection::FORWARD);
+    } else if (current == EdgeDirection::FORWARD) {
+        setEdgeDirection(first, second, EdgeDirection::BACKWARD);
+    } else if (current == EdgeDirection::BACKWARD) {
+        setEdgeDirection(first, second, EdgeDirection::BOTH);
+    }
 }
 
 bool GraphManager::addEdge(const std::string& uName, const std::string& vName) {
@@ -139,7 +199,6 @@ void GraphManager::removeVertex(const std::string& name) {
     Vertex* target = getOneVertex(name);
     if (!target) return;
 
-    // Remove edges pointing to this vertex
     for (Vertex* v : vertices) {
         if (v == target) continue;
         v->neighbors.erase(
@@ -267,7 +326,6 @@ void GraphManager::loadRandomPreset() {
         std::string name = generateNextVertexName();
         names.push_back(name);
         
-        // Prevent overlap
         sf::Vector2f pos;
         bool valid = false;
         int attempts = 0;
@@ -286,12 +344,10 @@ void GraphManager::loadRandomPreset() {
         createVertex(name, pos);
     }
 
-    // Connect nearest neighbors to ensure connectedness
     for (size_t i = 0; i < names.size(); i++) {
         Vertex* u = getOneVertex(names[i]);
         if (!u) continue;
         
-        // Find 2 closest nodes
         std::vector<std::pair<float, std::string>> distances;
         for (size_t j = 0; j < names.size(); j++) {
             if (i == j) continue;

@@ -8,10 +8,18 @@
 
 #include "Vertex.h"
 
+enum class EdgeDirection {
+    FORWARD,   // u -> v
+    BACKWARD,  // v -> u
+    BOTH,      // u <-> v
+    NONE
+};
+
 struct EdgeInfo {
     std::string u;
     std::string v;
     int weight;
+    EdgeDirection direction;
 };
 
 class GraphManager {
@@ -26,6 +34,10 @@ public:
     bool addEdge(const std::string& u, const std::string& v);
     bool removeEdge(const std::string& u, const std::string& v);
     bool hasEdge(const std::string& u, const std::string& v) const;
+
+    EdgeDirection getEdgeDirection(const std::string& u, const std::string& v) const;
+    void cycleEdgeDirection(const std::string& u, const std::string& v);
+    void setEdgeDirection(const std::string& u, const std::string& v, EdgeDirection dir);
 
     Vertex* getOneVertex(const std::string& vertexName);
     Vertex* getVertexAt(sf::Vector2f pos);
