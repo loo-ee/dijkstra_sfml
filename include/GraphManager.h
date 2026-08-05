@@ -1,6 +1,10 @@
 #pragma once
 
+#ifdef __EMSCRIPTEN__
+#include "sfml_web_shim.hpp"
+#else
 #include <SFML/Graphics.hpp>
+#endif
 #include <vector>
 #include <string>
 #include <algorithm>

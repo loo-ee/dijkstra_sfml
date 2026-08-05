@@ -1,10 +1,20 @@
+#ifdef __EMSCRIPTEN__
+#include "include/sfml_web_shim.hpp"
+#else
 #include <SFML/Graphics.hpp>
+#endif
 #include <iostream>
 #include <cmath>
 #include <string>
 #include <vector>
 #include <sstream>
 #include <iomanip>
+#include <functional>
+#include <algorithm>
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 #include "include/GraphManager.h"
 #include "include/Graph.h"
@@ -104,7 +114,7 @@ void drawEdgeWeightBadge(sf::RenderWindow& window, sf::Vector2f pos, int weight,
     window.draw(text);
 }
 
-int main() {
+struct AppState {
     unsigned int windowWidth = 1280;
     unsigned int windowHeight = 720;
     const float SIDEBAR_WIDTH = 260.f;
@@ -112,28 +122,15 @@ int main() {
     const float PLAYBAR_HEIGHT = 55.f;
 
     bool isFullscreen = false;
-
     sf::ContextSettings settings;
-    settings.antialiasingLevel = 8;
-
-    sf::RenderWindow window(sf::VideoMode(windowWidth, windowHeight), "Dijkstra Visualizer - SFML", sf::Style::Default, settings);
-    window.setFramerateLimit(60);
+    sf::RenderWindow window;
 
     sf::Font font;
-    if (!font.loadFromFile("fonts/Meslo/Meslo LG L Bold Nerd Font Complete.ttf")) {
-        std::cerr << "Warning: Could not load custom font.\n";
-    }
-
-    for (unsigned int sz : {11, 12, 13, 14, 15, 16}) {
-        const_cast<sf::Texture&>(font.getTexture(sz)).setSmooth(false);
-    }
-
     GraphManager manager;
     Graph solver;
 
-    manager.loadDefaultPreset();
-    Vertex* startVertex = manager.getOneVertex("A");
-    Vertex* endVertex = manager.getOneVertex("H");
+    Vertex* startVertex = nullptr;
+    Vertex* endVertex = nullptr;
 
     InteractionMode currentMode = InteractionMode::MOVE;
 
@@ -145,7 +142,6 @@ int main() {
     Vertex* draggedVertex = nullptr;
     Vertex* edgeSourceVertex = nullptr;
 
-    // Separate UI View and Canvas View
     sf::View uiView;
     sf::View canvasView;
     float zoomLevel = 1.0f;
@@ -153,11 +149,165 @@ int main() {
     sf::Vector2i panStartPixelPos;
     sf::Vector2f panStartCenter;
 
-    auto updateCanvasViewport = [&]() {
+    // UI Buttons
+    Button btnMove{sf::Vector2f(15.f, 45.f), sf::Vector2f(230.f, 32.f)};
+    Button btnAddNode{sf::Vector2f(15.f, 82.f), sf::Vector2f(230.f, 32.f)};
+    Button btnAddEdge{sf::Vector2f(15.f, 119.f), sf::Vector2f(230.f, 32.f)};
+    Button btnSetStart{sf::Vector2f(15.f, 156.f), sf::Vector2f(230.f, 32.f)};
+    Button btnSetEnd{sf::Vector2f(15.f, 193.f), sf::Vector2f(230.f, 32.f)};
+    Button btnSetDirection{sf::Vector2f(15.f, 230.f), sf::Vector2f(230.f, 32.f)};
+    Button btnDelete{sf::Vector2f(15.f, 267.f), sf::Vector2f(230.f, 32.f)};
+
+    std::vector<Button*> modeButtons;
+
+    Button btnPresetDefault{sf::Vector2f(15.f, 335.f), sf::Vector2f(230.f, 32.f)};
+    Button btnPresetGrid{sf::Vector2f(15.f, 372.f), sf::Vector2f(230.f, 32.f)};
+    Button btnPresetRandom{sf::Vector2f(15.f, 409.f), sf::Vector2f(230.f, 32.f)};
+    Button btnPresetClear{sf::Vector2f(15.f, 446.f), sf::Vector2f(230.f, 32.f)};
+
+    Button btnResetView{sf::Vector2f(15.f, 505.f), sf::Vector2f(110.f, 32.f)};
+    Button btnFullscreen{sf::Vector2f(135.f, 505.f), sf::Vector2f(110.f, 32.f)};
+    Button btnSolve{sf::Vector2f(15.f, 570.f), sf::Vector2f(230.f, 45.f)};
+
+    Button btnStepBack{sf::Vector2f(0.f, 0.f), sf::Vector2f(75.f, 34.f)};
+    Button btnPlayPause{sf::Vector2f(0.f, 0.f), sf::Vector2f(90.f, 34.f)};
+    Button btnStepFwd{sf::Vector2f(0.f, 0.f), sf::Vector2f(75.f, 34.f)};
+    Button btnReset{sf::Vector2f(0.f, 0.f), sf::Vector2f(75.f, 34.f)};
+
+    Button btnSpeed1{sf::Vector2f(0.f, 0.f), sf::Vector2f(45.f, 34.f)};
+    Button btnSpeed2{sf::Vector2f(0.f, 0.f), sf::Vector2f(45.f, 34.f)};
+    Button btnSpeed5{sf::Vector2f(0.f, 0.f), sf::Vector2f(45.f, 34.f)};
+
+    void init() {
+        settings.antialiasingLevel = 8;
+        window.create(sf::VideoMode(windowWidth, windowHeight), "Dijkstra Visualizer - SFML", sf::Style::Default, settings);
+        window.setFramerateLimit(60);
+
+        if (!font.loadFromFile("fonts/Meslo/Meslo LG L Bold Nerd Font Complete.ttf")) {
+            std::cerr << "Warning: Could not load custom font.\n";
+        }
+
+        for (unsigned int sz : {11, 12, 13, 14, 15, 16}) {
+            const_cast<sf::Texture&>(font.getTexture(sz)).setSmooth(false);
+        }
+
+        manager.loadDefaultPreset();
+        startVertex = manager.getOneVertex("A");
+        endVertex = manager.getOneVertex("H");
+
+        btnMove.setButtonText(font, "1. Select / Move", 13);
+        btnAddNode.setButtonText(font, "2. Add Node", 13);
+        btnAddEdge.setButtonText(font, "3. Add Edge", 13);
+        btnSetStart.setButtonText(font, "4. Set Start Node", 13);
+        btnSetEnd.setButtonText(font, "5. Set End Node", 13);
+        btnSetDirection.setButtonText(font, "6. Edge Direction", 13);
+        btnDelete.setButtonText(font, "7. Delete Item", 13);
+
+        btnMove.setCallback([this]() { currentMode = InteractionMode::MOVE; });
+        btnAddNode.setCallback([this]() { currentMode = InteractionMode::ADD_NODE; });
+        btnAddEdge.setCallback([this]() { currentMode = InteractionMode::ADD_EDGE; });
+        btnSetStart.setCallback([this]() { currentMode = InteractionMode::SET_START; });
+        btnSetEnd.setCallback([this]() { currentMode = InteractionMode::SET_END; });
+        btnSetDirection.setCallback([this]() { currentMode = InteractionMode::SET_DIRECTION; });
+        btnDelete.setCallback([this]() { currentMode = InteractionMode::DELETE_ITEM; });
+
+        modeButtons.push_back(&btnMove);
+        modeButtons.push_back(&btnAddNode);
+        modeButtons.push_back(&btnAddEdge);
+        modeButtons.push_back(&btnSetStart);
+        modeButtons.push_back(&btnSetEnd);
+        modeButtons.push_back(&btnSetDirection);
+        modeButtons.push_back(&btnDelete);
+
+        btnPresetDefault.setButtonText(font, "Default Graph", 13);
+        btnPresetGrid.setButtonText(font, "Grid Mesh", 13);
+        btnPresetRandom.setButtonText(font, "Random Graph", 13);
+        btnPresetClear.setButtonText(font, "Clear Canvas", 13);
+        btnPresetClear.setColors(sf::Color(153, 27, 27), sf::Color(185, 28, 28), COLOR_TEXT);
+
+        btnResetView.setButtonText(font, "Reset View", 12);
+        btnResetView.setCallback([this]() { resetView(); });
+
+        btnFullscreen.setButtonText(font, "Fullscreen", 12);
+        btnFullscreen.setCallback([this]() { toggleFullscreen(); });
+
+        btnSolve.setButtonText(font, "RUN DIJKSTRA", 16);
+        btnSolve.setColors(sf::Color(16, 185, 129), sf::Color(5, 150, 105), sf::Color::White);
+
+        btnPresetDefault.setCallback([this]() {
+            manager.loadDefaultPreset();
+            startVertex = manager.getOneVertex("A");
+            endVertex = manager.getOneVertex("H");
+            resetSolver();
+            resetView();
+        });
+
+        btnPresetGrid.setCallback([this]() {
+            manager.loadGridPreset();
+            auto& verts = manager.getVertices();
+            if (!verts.empty()) {
+                startVertex = verts.front();
+                endVertex = verts.back();
+            } else {
+                startVertex = endVertex = nullptr;
+            }
+            resetSolver();
+            resetView();
+        });
+
+        btnPresetRandom.setCallback([this]() {
+            manager.loadRandomPreset();
+            auto& verts = manager.getVertices();
+            if (!verts.empty()) {
+                startVertex = verts.front();
+                endVertex = verts.back();
+            } else {
+                startVertex = endVertex = nullptr;
+            }
+            resetSolver();
+            resetView();
+        });
+
+        btnPresetClear.setCallback([this]() {
+            manager.clearVertices();
+            startVertex = endVertex = nullptr;
+            resetSolver();
+        });
+
+        btnSolve.setCallback([this]() {
+            resetSolver();
+            isPlaying = true;
+        });
+
+        btnStepBack.setButtonText(font, "|< Back", 12);
+        btnPlayPause.setButtonText(font, "Play", 13);
+        btnPlayPause.setColors(sf::Color(14, 165, 233), sf::Color(56, 189, 248), sf::Color::White);
+        btnStepFwd.setButtonText(font, "Fwd >|", 12);
+        btnReset.setButtonText(font, "Reset", 12);
+
+        btnSpeed1.setButtonText(font, "1x", 12);
+        btnSpeed1.setActive(true);
+        btnSpeed2.setButtonText(font, "2x", 12);
+        btnSpeed5.setButtonText(font, "5x", 12);
+
+        btnStepBack.setCallback([this]() { isPlaying = false; solver.stepBackward(); });
+        btnStepFwd.setCallback([this]() { isPlaying = false; solver.stepForward(); });
+        btnPlayPause.setCallback([this]() { isPlaying = !isPlaying; });
+        btnReset.setCallback([this]() { isPlaying = false; solver.reset(); });
+
+        btnSpeed1.setCallback([this]() { stepDelay = 0.6f; btnSpeed1.setActive(true); btnSpeed2.setActive(false); btnSpeed5.setActive(false); });
+        btnSpeed2.setCallback([this]() { stepDelay = 0.25f; btnSpeed1.setActive(false); btnSpeed2.setActive(true); btnSpeed5.setActive(false); });
+        btnSpeed5.setCallback([this]() { stepDelay = 0.08f; btnSpeed1.setActive(false); btnSpeed2.setActive(false); btnSpeed5.setActive(true); });
+
+        updateCanvasViewport();
+        repositionPlaybar();
+        resetSolver();
+    }
+
+    void updateCanvasViewport() {
         windowWidth = window.getSize().x;
         windowHeight = window.getSize().y;
 
-        // Dynamically update UI View to match physical window dimensions 1:1
         uiView.setSize(static_cast<float>(windowWidth), static_cast<float>(windowHeight));
         uiView.setCenter(static_cast<float>(windowWidth) / 2.f, static_cast<float>(windowHeight) / 2.f);
 
@@ -179,19 +329,17 @@ int main() {
         canvasView.setSize(canvasWidth * zoomLevel, canvasHeight * zoomLevel);
         canvasView.setCenter(center);
         canvasView.setViewport(viewport);
-    };
+    }
 
-    updateCanvasViewport();
-
-    auto resetView = [&]() {
+    void resetView() {
         zoomLevel = 1.0f;
         float canvasWidth = std::max(100.f, window.getSize().x - SIDEBAR_WIDTH - INSPECTOR_WIDTH);
         float canvasHeight = std::max(100.f, window.getSize().y - PLAYBAR_HEIGHT);
         canvasView.setCenter(SIDEBAR_WIDTH + canvasWidth / 2.f, canvasHeight / 2.f);
         updateCanvasViewport();
-    };
+    }
 
-    auto toggleFullscreen = [&]() {
+    void toggleFullscreen() {
         isFullscreen = !isFullscreen;
         if (isFullscreen) {
             window.create(sf::VideoMode::getDesktopMode(), "Dijkstra Visualizer - SFML", sf::Style::Fullscreen, settings);
@@ -200,163 +348,17 @@ int main() {
         }
         window.setFramerateLimit(60);
         updateCanvasViewport();
-    };
+    }
 
-    // UI Buttons Initialization
-    std::vector<Button*> modeButtons;
-    Button btnMove(sf::Vector2f(15.f, 45.f), sf::Vector2f(230.f, 32.f));
-    btnMove.setButtonText(font, "1. Select / Move", 13);
-
-    Button btnAddNode(sf::Vector2f(15.f, 82.f), sf::Vector2f(230.f, 32.f));
-    btnAddNode.setButtonText(font, "2. Add Node", 13);
-
-    Button btnAddEdge(sf::Vector2f(15.f, 119.f), sf::Vector2f(230.f, 32.f));
-    btnAddEdge.setButtonText(font, "3. Add Edge", 13);
-
-    Button btnSetStart(sf::Vector2f(15.f, 156.f), sf::Vector2f(230.f, 32.f));
-    btnSetStart.setButtonText(font, "4. Set Start Node", 13);
-
-    Button btnSetEnd(sf::Vector2f(15.f, 193.f), sf::Vector2f(230.f, 32.f));
-    btnSetEnd.setButtonText(font, "5. Set End Node", 13);
-
-    Button btnSetDirection(sf::Vector2f(15.f, 230.f), sf::Vector2f(230.f, 32.f));
-    btnSetDirection.setButtonText(font, "6. Edge Direction", 13);
-
-    Button btnDelete(sf::Vector2f(15.f, 267.f), sf::Vector2f(230.f, 32.f));
-    btnDelete.setButtonText(font, "7. Delete Item", 13);
-
-    btnMove.setCallback([&]() { currentMode = InteractionMode::MOVE; });
-    btnAddNode.setCallback([&]() { currentMode = InteractionMode::ADD_NODE; });
-    btnAddEdge.setCallback([&]() { currentMode = InteractionMode::ADD_EDGE; });
-    btnSetStart.setCallback([&]() { currentMode = InteractionMode::SET_START; });
-    btnSetEnd.setCallback([&]() { currentMode = InteractionMode::SET_END; });
-    btnSetDirection.setCallback([&]() { currentMode = InteractionMode::SET_DIRECTION; });
-    btnDelete.setCallback([&]() { currentMode = InteractionMode::DELETE_ITEM; });
-
-    modeButtons.push_back(&btnMove);
-    modeButtons.push_back(&btnAddNode);
-    modeButtons.push_back(&btnAddEdge);
-    modeButtons.push_back(&btnSetStart);
-    modeButtons.push_back(&btnSetEnd);
-    modeButtons.push_back(&btnSetDirection);
-    modeButtons.push_back(&btnDelete);
-
-    // Preset & View Control Buttons
-    Button btnPresetDefault(sf::Vector2f(15.f, 335.f), sf::Vector2f(230.f, 32.f));
-    btnPresetDefault.setButtonText(font, "Default Graph", 13);
-
-    Button btnPresetGrid(sf::Vector2f(15.f, 372.f), sf::Vector2f(230.f, 32.f));
-    btnPresetGrid.setButtonText(font, "Grid Mesh", 13);
-
-    Button btnPresetRandom(sf::Vector2f(15.f, 409.f), sf::Vector2f(230.f, 32.f));
-    btnPresetRandom.setButtonText(font, "Random Graph", 13);
-
-    Button btnPresetClear(sf::Vector2f(15.f, 446.f), sf::Vector2f(230.f, 32.f));
-    btnPresetClear.setButtonText(font, "Clear Canvas", 13);
-    btnPresetClear.setColors(sf::Color(153, 27, 27), sf::Color(185, 28, 28), COLOR_TEXT);
-
-    Button btnResetView(sf::Vector2f(15.f, 505.f), sf::Vector2f(110.f, 32.f));
-    btnResetView.setButtonText(font, "Reset View", 12);
-    btnResetView.setCallback(resetView);
-
-    Button btnFullscreen(sf::Vector2f(135.f, 505.f), sf::Vector2f(110.f, 32.f));
-    btnFullscreen.setButtonText(font, "Fullscreen", 12);
-    btnFullscreen.setCallback(toggleFullscreen);
-
-    Button btnSolve(sf::Vector2f(15.f, 570.f), sf::Vector2f(230.f, 45.f));
-    btnSolve.setButtonText(font, "RUN DIJKSTRA", 16);
-    btnSolve.setColors(sf::Color(16, 185, 129), sf::Color(5, 150, 105), sf::Color::White);
-
-    auto resetSolver = [&]() {
+    void resetSolver() {
         isPlaying = false;
         if (startVertex && endVertex) {
             manager.resetGraphStates(startVertex, endVertex);
             solver.init(startVertex, endVertex, manager.getVertices());
         }
-    };
+    }
 
-    btnPresetDefault.setCallback([&]() {
-        manager.loadDefaultPreset();
-        startVertex = manager.getOneVertex("A");
-        endVertex = manager.getOneVertex("H");
-        resetSolver();
-        resetView();
-    });
-
-    btnPresetGrid.setCallback([&]() {
-        manager.loadGridPreset();
-        auto& verts = manager.getVertices();
-        if (!verts.empty()) {
-            startVertex = verts.front();
-            endVertex = verts.back();
-        } else {
-            startVertex = endVertex = nullptr;
-        }
-        resetSolver();
-        resetView();
-    });
-
-    btnPresetRandom.setCallback([&]() {
-        manager.loadRandomPreset();
-        auto& verts = manager.getVertices();
-        if (!verts.empty()) {
-            startVertex = verts.front();
-            endVertex = verts.back();
-        } else {
-            startVertex = endVertex = nullptr;
-        }
-        resetSolver();
-        resetView();
-    });
-
-    btnPresetClear.setCallback([&]() {
-        manager.clearVertices();
-        startVertex = endVertex = nullptr;
-        resetSolver();
-    });
-
-    btnSolve.setCallback([&]() {
-        resetSolver();
-        isPlaying = true;
-    });
-
-    // Initial Playbar Buttons
-    float playbarY = windowHeight - PLAYBAR_HEIGHT + 10.f;
-    float playbarStartX = SIDEBAR_WIDTH + 15.f;
-
-    Button btnStepBack(sf::Vector2f(playbarStartX, playbarY), sf::Vector2f(75.f, 34.f));
-    btnStepBack.setButtonText(font, "|< Back", 12);
-
-    Button btnPlayPause(sf::Vector2f(playbarStartX + 82.f, playbarY), sf::Vector2f(90.f, 34.f));
-    btnPlayPause.setButtonText(font, "Play", 13);
-    btnPlayPause.setColors(sf::Color(14, 165, 233), sf::Color(56, 189, 248), sf::Color::White);
-
-    Button btnStepFwd(sf::Vector2f(playbarStartX + 179.f, playbarY), sf::Vector2f(75.f, 34.f));
-    btnStepFwd.setButtonText(font, "Fwd >|", 12);
-
-    Button btnReset(sf::Vector2f(playbarStartX + 261.f, playbarY), sf::Vector2f(75.f, 34.f));
-    btnReset.setButtonText(font, "Reset", 12);
-
-    Button btnSpeed1(sf::Vector2f(playbarStartX + 370.f, playbarY), sf::Vector2f(45.f, 34.f));
-    btnSpeed1.setButtonText(font, "1x", 12);
-    btnSpeed1.setActive(true);
-
-    Button btnSpeed2(sf::Vector2f(playbarStartX + 420.f, playbarY), sf::Vector2f(45.f, 34.f));
-    btnSpeed2.setButtonText(font, "2x", 12);
-
-    Button btnSpeed5(sf::Vector2f(playbarStartX + 470.f, playbarY), sf::Vector2f(45.f, 34.f));
-    btnSpeed5.setButtonText(font, "5x", 12);
-
-    btnStepBack.setCallback([&]() { isPlaying = false; solver.stepBackward(); });
-    btnStepFwd.setCallback([&]() { isPlaying = false; solver.stepForward(); });
-    btnPlayPause.setCallback([&]() { isPlaying = !isPlaying; });
-    btnReset.setCallback([&]() { isPlaying = false; solver.reset(); });
-
-    btnSpeed1.setCallback([&]() { stepDelay = 0.6f; btnSpeed1.setActive(true); btnSpeed2.setActive(false); btnSpeed5.setActive(false); });
-    btnSpeed2.setCallback([&]() { stepDelay = 0.25f; btnSpeed1.setActive(false); btnSpeed2.setActive(true); btnSpeed5.setActive(false); });
-    btnSpeed5.setCallback([&]() { stepDelay = 0.08f; btnSpeed1.setActive(false); btnSpeed2.setActive(false); btnSpeed5.setActive(true); });
-
-    auto repositionPlaybar = [&]() {
+    void repositionPlaybar() {
         float py = window.getSize().y - PLAYBAR_HEIGHT + 10.f;
         float px = SIDEBAR_WIDTH + 15.f;
 
@@ -368,12 +370,11 @@ int main() {
         btnSpeed1.setPosition(sf::Vector2f(px + 370.f, py));
         btnSpeed2.setPosition(sf::Vector2f(px + 420.f, py));
         btnSpeed5.setPosition(sf::Vector2f(px + 470.f, py));
-    };
+    }
 
-    repositionPlaybar();
-    resetSolver();
+    void updateAndRender() {
+        if (!window.isOpen()) return;
 
-    while (window.isOpen()) {
         sf::Vector2i mousePixelPos = sf::Mouse::getPosition(window);
         sf::Vector2f uiMousePos = window.mapPixelToCoords(mousePixelPos, uiView);
         sf::Vector2f canvasMousePos = window.mapPixelToCoords(mousePixelPos, canvasView);
@@ -956,6 +957,22 @@ int main() {
 
         window.display();
     }
+};
+
+int main() {
+    AppState app;
+    app.init();
+
+#ifdef __EMSCRIPTEN__
+    emscripten_set_main_loop_arg([](void* arg) {
+        auto* state = static_cast<AppState*>(arg);
+        state->updateAndRender();
+    }, &app, 0, 1);
+#else
+    while (app.window.isOpen()) {
+        app.updateAndRender();
+    }
+#endif
 
     return 0;
 }
