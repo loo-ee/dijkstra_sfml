@@ -5,20 +5,33 @@
 #include <string>
 #include <limits>
 
-#define INF std::numeric_limits<int>::max();
+#define INF std::numeric_limits<int>::max()
+
+enum class NodeState {
+    DEFAULT,
+    START,
+    END,
+    CURRENT,
+    VISITED,
+    PATH
+};
 
 struct Vertex {
     std::string vertexName;
     std::vector<std::pair<std::string, int>> neighbors;
 
-    int vertexWeight;
     int minDistanceFromSrc;
-
     Vertex* parent;
-    sf::RectangleShape vertexRect;
 
-    Vertex(std::string vertexName, std::vector<std::pair<std::string, int>> neighbors);
-    void setPosition(sf::Vector2f pos);
-    void setDimensions(sf::Vector2f dimensions);
-    void setColor(sf::Color color);
+    sf::CircleShape vertexCircle;
+    NodeState state;
+    static constexpr float RADIUS = 22.f;
+
+    Vertex(std::string vertexName, std::vector<std::pair<std::string, int>> neighbors = {});
+
+    sf::Vector2f getCenterPos() const;
+    void setCenterPos(sf::Vector2f pos);
+    bool contains(sf::Vector2f point) const;
+    void setState(NodeState newState);
+    void updateVisuals();
 };

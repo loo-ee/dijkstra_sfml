@@ -2,646 +2,910 @@
 #include <iostream>
 #include <cmath>
 #include <string>
-#include <stack>
+#include <vector>
+#include <sstream>
+#include <iomanip>
 
 #include "include/GraphManager.h"
+#include "include/Graph.h"
 #include "include/Button.h"
 
-#define WHITE sf::Color::White
-#define BLACK sf::Color::Black
-#define GREEN sf::Color::Green
-#define BLUE sf::Color::Blue
-#define RED sf::Color::Red
+enum class InteractionMode {
+    MOVE,
+    ADD_NODE,
+    ADD_EDGE,
+    SET_START,
+    SET_END,
+    DELETE_ITEM
+};
 
-void addVertexFromUser(GraphManager& manager, std::string& inputText);
-void addVerticesToManager(GraphManager& manager);
-void addVertexToManager(
-    GraphManager& manager, std::string vertexName,
-    std::vector<std::pair<std::string, int>> neighbors
-);
-void updateEdgeWeights(GraphManager& manager);
+// Clean Color Palette
+const sf::Color COLOR_BG(15, 23, 42);        // #0f172a
+const sf::Color COLOR_SIDEBAR(30, 41, 59);   // #1e293b
+const sf::Color COLOR_CANVAS(2, 6, 23);       // #020617
+const sf::Color COLOR_BORDER(71, 85, 105);    // #475569
+const sf::Color COLOR_TEXT(241, 245, 249);    // #f1f5f9
+const sf::Color COLOR_MUTED(148, 163, 184);  // #94a3b8
 
-int main(int argc, char* argv[]) {
-    sf::RenderWindow window(sf::VideoMode(1280, 720), "Dijkstra Visualizer");
-    sf::Font font1;
-    GraphManager manager;
+const sf::Color COLOR_EDGE_DEFAULT(71, 85, 105);  // #475569
+const sf::Color COLOR_EDGE_ACTIVE(245, 158, 11);  // Amber #f59e0b
+const sf::Color COLOR_EDGE_PATH(16, 185, 129);    // Emerald #10b981
 
+void drawThickLine(sf::RenderWindow& window, sf::Vector2f point1, sf::Vector2f point2, float thickness, sf::Color color) {
+    sf::Vector2f dir = point2 - point1;
+    float length = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+    if (length == 0.f) return;
+
+    sf::Vector2f unitDir = dir / length;
+    sf::Vector2f normal(-unitDir.y, unitDir.x);
+    sf::Vector2f offset = normal * (thickness / 2.f);
+
+    sf::VertexArray quad(sf::Quads, 4);
+    quad[0].position = point1 + offset;
+    quad[1].position = point2 + offset;
+    quad[2].position = point2 - offset;
+    quad[3].position = point1 - offset;
+
+    for (int i = 0; i < 4; i++) {
+        quad[i].color = color;
+    }
+
+    window.draw(quad);
+}
+
+void drawEdgeWeightBadge(sf::RenderWindow& window, sf::Vector2f pos, int weight, const sf::Font& font, sf::Color badgeBgColor = sf::Color(30, 41, 59)) {
+    std::string textStr = std::to_string(weight);
+    sf::Text text;
+    text.setFont(font);
+    text.setString(textStr);
+    text.setCharacterSize(14);
+    text.setFillColor(COLOR_TEXT);
+
+    sf::FloatRect textBounds = text.getLocalBounds();
+    float paddingX = 8.f;
+    float paddingY = 4.f;
+
+    sf::RectangleShape badge;
+    badge.setSize(sf::Vector2f(textBounds.width + paddingX * 2.f, textBounds.height + paddingY * 2.f));
+    badge.setOrigin(std::floor(badge.getSize().x / 2.f), std::floor(badge.getSize().y / 2.f));
+    badge.setPosition(std::floor(pos.x), std::floor(pos.y));
+    badge.setFillColor(badgeBgColor);
+    badge.setOutlineThickness(1.f);
+    badge.setOutlineColor(COLOR_BORDER);
+
+    text.setOrigin(std::floor(textBounds.left + textBounds.width / 2.f), std::floor(textBounds.top + textBounds.height / 2.f));
+    text.setPosition(std::floor(pos.x), std::floor(pos.y));
+
+    window.draw(badge);
+    window.draw(text);
+}
+
+int main() {
+    unsigned int windowWidth = 1280;
+    unsigned int windowHeight = 720;
+    const float SIDEBAR_WIDTH = 260.f;
+    const float INSPECTOR_WIDTH = 280.f;
+    const float PLAYBAR_HEIGHT = 55.f;
+
+    bool isFullscreen = false;
+
+    // Enable 8x MSAA Anti-Aliasing for crisp vector shapes
+    sf::ContextSettings settings;
+    settings.antialiasingLevel = 8;
+
+    sf::RenderWindow window(sf::VideoMode(windowWidth, windowHeight), "Dijkstra Visualizer - SFML", sf::Style::Default, settings);
     window.setFramerateLimit(60);
-    font1.loadFromFile("fonts/Meslo/Meslo LG L Bold Nerd Font Complete.ttf");
 
-    std::string inputText;
-    std::string messageInfo;
+    sf::Font font;
+    if (!font.loadFromFile("fonts/Meslo/Meslo LG L Bold Nerd Font Complete.ttf")) {
+        std::cerr << "Warning: Could not load custom font.\n";
+    }
 
-    bool appLoopRunning = true;
-    bool isCalculating = false;
-    bool dragging = false;
-    bool isReceivingInput = false;
-    bool isAddingNewLine = false;
-    bool isSelectingStartVertex = false;
-    bool isSelectingEndVertex = false;
-    bool isFirstRun = true;
-    bool vertexLoopRunning = true;
-    bool isGraphFilled = true;
-    bool showCursor = true;
-    bool edgeWeightsDirty = true;
+    // Disable texture smoothing for font sizes to render crisp pixel-sharp text
+    for (unsigned int sz : {11, 12, 13, 14, 15, 16}) {
+        const_cast<sf::Texture&>(font.getTexture(sz)).setSmooth(false);
+    }
 
-    void (*createVertexFromUser)(GraphManager& manager, std::string& inputText) = addVertexFromUser;
-    void (*addVerticesToGraph)(GraphManager& manager) = addVerticesToManager;
+    GraphManager manager;
+    Graph solver;
 
-    Vertex* verticesForNewLine[2] = { nullptr };
-    sf::Vector2f tempNewLineCoords[2];
-    sf::Vector2f oldMousePos;
+    manager.loadDefaultPreset();
+    Vertex* startVertex = manager.getOneVertex("A");
+    Vertex* endVertex = manager.getOneVertex("H");
 
-    sf::Clock cursorClock;
-    sf::Clock calculationClock;
+    InteractionMode currentMode = InteractionMode::MOVE;
 
-    const int userInputTextFont = 28;
-    const int messageTextFont = 20;
+    bool isPlaying = false;
+    float stepDelay = 0.5f;
+    sf::Clock autoStepClock;
+    sf::Clock doubleClickClock;
 
-    sf::Text userInputText;
-    userInputText.setPosition(sf::Vector2f(500.f, 650.f));
-    userInputText.setFont(font1);
-    userInputText.setString("Vertex name: " + inputText);
-    userInputText.setCharacterSize(userInputTextFont);
-    userInputText.setFillColor(WHITE);
+    Vertex* draggedVertex = nullptr;
+    Vertex* edgeSourceVertex = nullptr;
 
-    sf::Text messageText;
-    messageText.setPosition(sf::Vector2f(10.f, 650.f));
-    messageText.setFont(font1);
-    messageText.setCharacterSize(messageTextFont);
-    messageText.setFillColor(WHITE);
+    // View Panning and Zooming State
+    sf::View canvasView;
+    float zoomLevel = 1.0f;
+    bool isPanningCanvas = false;
+    sf::Vector2i panStartPixelPos;
+    sf::Vector2f panStartCenter;
 
-    sf::Vector2f cursorPos(userInputText.getPosition().x, userInputText.getPosition().y);
-    sf::RectangleShape cursor(sf::Vector2f(2.f, 30.f));
-    cursor.setFillColor(WHITE);
-    cursor.setPosition(cursorPos);
+    auto updateCanvasViewport = [&]() {
+        windowWidth = window.getSize().x;
+        windowHeight = window.getSize().y;
 
-    Vertex* startVertex = nullptr;
-    Vertex* endVertex = nullptr;
-    Vertex* topUnexplored = nullptr;
-    Vertex* topExplored = nullptr;
-    Vertex* dijkstraResultVertex = nullptr;
+        float canvasWidth = std::max(100.f, windowWidth - SIDEBAR_WIDTH - INSPECTOR_WIDTH);
+        float canvasHeight = std::max(100.f, windowHeight - PLAYBAR_HEIGHT);
 
-    std::vector<Vertex* >* vertices = manager.getVertices();
-    std::vector<Vertex* > unexplored;
-    std::vector<Vertex* > explored;
+        sf::FloatRect viewport(
+            SIDEBAR_WIDTH / static_cast<float>(windowWidth),
+            0.f,
+            canvasWidth / static_cast<float>(windowWidth),
+            canvasHeight / static_cast<float>(windowHeight)
+        );
 
-    std::vector<Vertex* >::iterator unexploredIterator = unexplored.begin();
-    std::vector<Vertex* >::iterator exploredIterator = explored.begin();
-
-    sf::RectangleShape* movedRect = nullptr;
-    sf::RectangleShape* srcRect = nullptr;
-    sf::RectangleShape* dstRect = nullptr;
-    sf::RectangleShape* srcRectForCalculating = nullptr;
-    sf::RectangleShape* dstRectForCalculating = nullptr;
-
-    Button calculateBtn(sf::Vector2f(10.f, 10.f), sf::Vector2f(200.f, 50.f));
-    calculateBtn.setButtonColor(GREEN);
-    calculateBtn.setButtonText(font1, "Calculate", 24);
-    calculateBtn.setButtonTextColor(BLACK);
-    calculateBtn.setCallback([&isCalculating, &isFirstRun, &vertexLoopRunning]() {
-        isCalculating = !isCalculating;
-        isFirstRun = true;
-        vertexLoopRunning = true;
-        });
-
-    Button addVertexBtn(sf::Vector2f(10.f, 70.f), sf::Vector2f(200.f, 50.f));
-    addVertexBtn.setButtonColor(BLUE);
-    addVertexBtn.setButtonText(font1, "Add Vertex", 24);
-    addVertexBtn.setButtonTextColor(WHITE);
-    addVertexBtn.setCallback([createVertexFromUser, &manager, &isReceivingInput, &inputText]() {
-
-        if (isReceivingInput) {
-            createVertexFromUser(manager, inputText);
+        sf::Vector2f center = canvasView.getCenter();
+        if (center.x == 0.f && center.y == 0.f) {
+            center = sf::Vector2f(SIDEBAR_WIDTH + canvasWidth / 2.f, canvasHeight / 2.f);
         }
 
-        isReceivingInput = !isReceivingInput;
+        canvasView.setSize(canvasWidth * zoomLevel, canvasHeight * zoomLevel);
+        canvasView.setCenter(center);
+        canvasView.setViewport(viewport);
+    };
+
+    updateCanvasViewport();
+
+    auto resetView = [&]() {
+        zoomLevel = 1.0f;
+        float canvasWidth = std::max(100.f, window.getSize().x - SIDEBAR_WIDTH - INSPECTOR_WIDTH);
+        float canvasHeight = std::max(100.f, window.getSize().y - PLAYBAR_HEIGHT);
+        canvasView.setCenter(SIDEBAR_WIDTH + canvasWidth / 2.f, canvasHeight / 2.f);
+        updateCanvasViewport();
+    };
+
+    auto toggleFullscreen = [&]() {
+        isFullscreen = !isFullscreen;
+        if (isFullscreen) {
+            window.create(sf::VideoMode::getDesktopMode(), "Dijkstra Visualizer - SFML", sf::Style::Fullscreen, settings);
+        } else {
+            window.create(sf::VideoMode(1280, 720), "Dijkstra Visualizer - SFML", sf::Style::Default, settings);
+        }
+        window.setFramerateLimit(60);
+        updateCanvasViewport();
+    };
+
+    // UI Buttons Initialization
+    std::vector<Button*> modeButtons;
+    Button btnMove(sf::Vector2f(15.f, 50.f), sf::Vector2f(230.f, 36.f));
+    btnMove.setButtonText(font, "1. Select / Move", 14);
+
+    Button btnAddNode(sf::Vector2f(15.f, 92.f), sf::Vector2f(230.f, 36.f));
+    btnAddNode.setButtonText(font, "2. Add Node", 14);
+
+    Button btnAddEdge(sf::Vector2f(15.f, 134.f), sf::Vector2f(230.f, 36.f));
+    btnAddEdge.setButtonText(font, "3. Add Edge", 14);
+
+    Button btnSetStart(sf::Vector2f(15.f, 176.f), sf::Vector2f(230.f, 36.f));
+    btnSetStart.setButtonText(font, "4. Set Start Node", 14);
+
+    Button btnSetEnd(sf::Vector2f(15.f, 218.f), sf::Vector2f(230.f, 36.f));
+    btnSetEnd.setButtonText(font, "5. Set End Node", 14);
+
+    Button btnDelete(sf::Vector2f(15.f, 260.f), sf::Vector2f(230.f, 36.f));
+    btnDelete.setButtonText(font, "6. Delete Item", 14);
+
+    btnMove.setCallback([&]() { currentMode = InteractionMode::MOVE; });
+    btnAddNode.setCallback([&]() { currentMode = InteractionMode::ADD_NODE; });
+    btnAddEdge.setCallback([&]() { currentMode = InteractionMode::ADD_EDGE; });
+    btnSetStart.setCallback([&]() { currentMode = InteractionMode::SET_START; });
+    btnSetEnd.setCallback([&]() { currentMode = InteractionMode::SET_END; });
+    btnDelete.setCallback([&]() { currentMode = InteractionMode::DELETE_ITEM; });
+
+    modeButtons.push_back(&btnMove);
+    modeButtons.push_back(&btnAddNode);
+    modeButtons.push_back(&btnAddEdge);
+    modeButtons.push_back(&btnSetStart);
+    modeButtons.push_back(&btnSetEnd);
+    modeButtons.push_back(&btnDelete);
+
+    // Preset & View Control Buttons
+    Button btnPresetDefault(sf::Vector2f(15.f, 335.f), sf::Vector2f(230.f, 32.f));
+    btnPresetDefault.setButtonText(font, "Default Graph", 13);
+
+    Button btnPresetGrid(sf::Vector2f(15.f, 372.f), sf::Vector2f(230.f, 32.f));
+    btnPresetGrid.setButtonText(font, "Grid Mesh", 13);
+
+    Button btnPresetRandom(sf::Vector2f(15.f, 409.f), sf::Vector2f(230.f, 32.f));
+    btnPresetRandom.setButtonText(font, "Random Graph", 13);
+
+    Button btnPresetClear(sf::Vector2f(15.f, 446.f), sf::Vector2f(230.f, 32.f));
+    btnPresetClear.setButtonText(font, "Clear Canvas", 13);
+    btnPresetClear.setColors(sf::Color(153, 27, 27), sf::Color(185, 28, 28), COLOR_TEXT);
+
+    Button btnResetView(sf::Vector2f(15.f, 505.f), sf::Vector2f(110.f, 32.f));
+    btnResetView.setButtonText(font, "Reset View", 12);
+    btnResetView.setCallback(resetView);
+
+    Button btnFullscreen(sf::Vector2f(135.f, 505.f), sf::Vector2f(110.f, 32.f));
+    btnFullscreen.setButtonText(font, "Fullscreen", 12);
+    btnFullscreen.setCallback(toggleFullscreen);
+
+    Button btnSolve(sf::Vector2f(15.f, 570.f), sf::Vector2f(230.f, 45.f));
+    btnSolve.setButtonText(font, "RUN DIJKSTRA", 16);
+    btnSolve.setColors(sf::Color(16, 185, 129), sf::Color(5, 150, 105), sf::Color::White);
+
+    auto resetSolver = [&]() {
+        isPlaying = false;
+        if (startVertex && endVertex) {
+            manager.resetGraphStates(startVertex, endVertex);
+            solver.init(startVertex, endVertex, manager.getVertices());
+        }
+    };
+
+    btnPresetDefault.setCallback([&]() {
+        manager.loadDefaultPreset();
+        startVertex = manager.getOneVertex("A");
+        endVertex = manager.getOneVertex("H");
+        resetSolver();
+        resetView();
     });
 
-    Button addEdgeBtn(sf::Vector2f(10.f, 130.f), sf::Vector2f(200.f, 50.f));
-    addEdgeBtn.setButtonColor(BLUE);
-    addEdgeBtn.setButtonText(font1, "Add Edge", 24);
-    addEdgeBtn.setButtonTextColor(WHITE);
-    addEdgeBtn.setCallback([&isAddingNewLine]() {
-        isAddingNewLine = !isAddingNewLine;
+    btnPresetGrid.setCallback([&]() {
+        manager.loadGridPreset();
+        auto& verts = manager.getVertices();
+        if (!verts.empty()) {
+            startVertex = verts.front();
+            endVertex = verts.back();
+        } else {
+            startVertex = endVertex = nullptr;
+        }
+        resetSolver();
+        resetView();
     });
 
-    Button selectStartBtn(sf::Vector2f(10.f, 190.f), sf::Vector2f(200.f, 50.f));
-    selectStartBtn.setButtonColor(GREEN);
-    selectStartBtn.setButtonText(font1, "Select Start", 24);
-    selectStartBtn.setButtonTextColor(BLACK);
-    selectStartBtn.setCallback([&isSelectingStartVertex, &isSelectingEndVertex]() {
-        isSelectingEndVertex = false;
-        isSelectingStartVertex = true;
+    btnPresetRandom.setCallback([&]() {
+        manager.loadRandomPreset();
+        auto& verts = manager.getVertices();
+        if (!verts.empty()) {
+            startVertex = verts.front();
+            endVertex = verts.back();
+        } else {
+            startVertex = endVertex = nullptr;
+        }
+        resetSolver();
+        resetView();
     });
 
-    Button selectEndBtn(sf::Vector2f(10.f, 250.f), sf::Vector2f(200.f, 50.f));
-    selectEndBtn.setButtonColor(RED);
-    selectEndBtn.setButtonText(font1, "Select End", 24);
-    selectEndBtn.setButtonTextColor(WHITE);
-    selectEndBtn.setCallback([&isSelectingEndVertex, &isSelectingStartVertex]() {
-        isSelectingStartVertex = false;
-        isSelectingEndVertex = true;
-    });
-
-    Button clearVerticesBtn(sf::Vector2f(10.f, 350.f), sf::Vector2f(200.f, 50.f));
-    clearVerticesBtn.setButtonColor(RED);
-    clearVerticesBtn.setButtonText(font1, "Clear Graph", 24);
-    clearVerticesBtn.setButtonTextColor(WHITE);
-    clearVerticesBtn.setCallback([&isGraphFilled, &manager]() {
+    btnPresetClear.setCallback([&]() {
         manager.clearVertices();
-        isGraphFilled = false;
+        startVertex = endVertex = nullptr;
+        resetSolver();
     });
 
-    Button addVerticesBtn(sf::Vector2f(10.f, 410.f), sf::Vector2f(200.f, 50.f));
-    addVerticesBtn.setButtonColor(GREEN);
-    addVerticesBtn.setButtonText(font1, "Fill Graph", 24);
-    addVerticesBtn.setButtonTextColor(WHITE);
-    addVerticesBtn.setCallback([addVerticesToGraph, &isGraphFilled, &manager]() {
-        if (!isGraphFilled) {
-            addVerticesToGraph(manager);
-            isGraphFilled = true;
-        }
+    btnSolve.setCallback([&]() {
+        resetSolver();
+        isPlaying = true;
     });
 
-    addVerticesToManager(manager);
-    updateEdgeWeights(manager);
-    edgeWeightsDirty = false;
+    // Initial Playbar Buttons with exact calculated positions
+    float playbarY = windowHeight - PLAYBAR_HEIGHT + 10.f;
+    float playbarStartX = SIDEBAR_WIDTH + 15.f;
+
+    Button btnStepBack(sf::Vector2f(playbarStartX, playbarY), sf::Vector2f(75.f, 34.f));
+    btnStepBack.setButtonText(font, "|< Back", 12);
+
+    Button btnPlayPause(sf::Vector2f(playbarStartX + 82.f, playbarY), sf::Vector2f(90.f, 34.f));
+    btnPlayPause.setButtonText(font, "Play", 13);
+    btnPlayPause.setColors(sf::Color(14, 165, 233), sf::Color(56, 189, 248), sf::Color::White);
+
+    Button btnStepFwd(sf::Vector2f(playbarStartX + 179.f, playbarY), sf::Vector2f(75.f, 34.f));
+    btnStepFwd.setButtonText(font, "Fwd >|", 12);
+
+    Button btnReset(sf::Vector2f(playbarStartX + 261.f, playbarY), sf::Vector2f(75.f, 34.f));
+    btnReset.setButtonText(font, "Reset", 12);
+
+    Button btnSpeed1(sf::Vector2f(playbarStartX + 370.f, playbarY), sf::Vector2f(45.f, 34.f));
+    btnSpeed1.setButtonText(font, "1x", 12);
+    btnSpeed1.setActive(true);
+
+    Button btnSpeed2(sf::Vector2f(playbarStartX + 420.f, playbarY), sf::Vector2f(45.f, 34.f));
+    btnSpeed2.setButtonText(font, "2x", 12);
+
+    Button btnSpeed5(sf::Vector2f(playbarStartX + 470.f, playbarY), sf::Vector2f(45.f, 34.f));
+    btnSpeed5.setButtonText(font, "5x", 12);
+
+    btnStepBack.setCallback([&]() { isPlaying = false; solver.stepBackward(); });
+    btnStepFwd.setCallback([&]() { isPlaying = false; solver.stepForward(); });
+    btnPlayPause.setCallback([&]() { isPlaying = !isPlaying; });
+    btnReset.setCallback([&]() { isPlaying = false; solver.reset(); });
+
+    btnSpeed1.setCallback([&]() { stepDelay = 0.6f; btnSpeed1.setActive(true); btnSpeed2.setActive(false); btnSpeed5.setActive(false); });
+    btnSpeed2.setCallback([&]() { stepDelay = 0.25f; btnSpeed1.setActive(false); btnSpeed2.setActive(true); btnSpeed5.setActive(false); });
+    btnSpeed5.setCallback([&]() { stepDelay = 0.08f; btnSpeed1.setActive(false); btnSpeed2.setActive(false); btnSpeed5.setActive(true); });
+
+    auto repositionPlaybar = [&]() {
+        float py = window.getSize().y - PLAYBAR_HEIGHT + 10.f;
+        float px = SIDEBAR_WIDTH + 15.f;
+
+        btnStepBack.setPosition(sf::Vector2f(px, py));
+        btnPlayPause.setPosition(sf::Vector2f(px + 82.f, py));
+        btnStepFwd.setPosition(sf::Vector2f(px + 179.f, py));
+        btnReset.setPosition(sf::Vector2f(px + 261.f, py));
+
+        btnSpeed1.setPosition(sf::Vector2f(px + 370.f, py));
+        btnSpeed2.setPosition(sf::Vector2f(px + 420.f, py));
+        btnSpeed5.setPosition(sf::Vector2f(px + 470.f, py));
+    };
+
+    repositionPlaybar();
+    resetSolver();
 
     while (window.isOpen()) {
+        sf::Vector2i mousePixelPos = sf::Mouse::getPosition(window);
+        sf::Vector2f uiMousePos = window.mapPixelToCoords(mousePixelPos, window.getDefaultView());
+        sf::Vector2f canvasMousePos = window.mapPixelToCoords(mousePixelPos, canvasView);
+
+        float currentCanvasWidth = std::max(100.f, window.getSize().x - SIDEBAR_WIDTH - INSPECTOR_WIDTH);
+        float currentCanvasHeight = std::max(100.f, window.getSize().y - PLAYBAR_HEIGHT);
+        sf::FloatRect canvasPixelArea(SIDEBAR_WIDTH, 0.f, currentCanvasWidth, currentCanvasHeight);
+
         sf::Event event;
-        window.clear();
-
         while (window.pollEvent(event)) {
-            if (event.type == sf::Event::Closed)
+            if (event.type == sf::Event::Closed) {
                 window.close();
+            }
 
+            if (event.type == sf::Event::Resized) {
+                updateCanvasViewport();
+                repositionPlaybar();
+            }
+
+            // Zooming via Mouse Wheel
+            if (event.type == sf::Event::MouseWheelScrolled) {
+                if (canvasPixelArea.contains(static_cast<float>(mousePixelPos.x), static_cast<float>(mousePixelPos.y))) {
+                    if (event.mouseWheelScroll.delta > 0 && zoomLevel > 0.25f) {
+                        zoomLevel *= 0.9f;
+                    } else if (event.mouseWheelScroll.delta < 0 && zoomLevel < 4.0f) {
+                        zoomLevel *= 1.1111f;
+                    }
+                    updateCanvasViewport();
+                }
+            }
+
+            // Mouse Pressed Events
             if (event.type == sf::Event::MouseButtonPressed) {
-                if (event.mouseButton.button == sf::Mouse::Left) {
-                    for (int i = 0; i < vertices->size(); i++) {
-                        Vertex* currentVertex = vertices->at(i);
-                        sf::RectangleShape* currentRect = &currentVertex->vertexRect;
-                        sf::Vector2f mousePos = window.mapPixelToCoords(sf::Vector2i(event.mouseButton.x, event.mouseButton.y));
+                if (event.mouseButton.button == sf::Mouse::Middle ||
+                   (event.mouseButton.button == sf::Mouse::Right && currentMode == InteractionMode::MOVE && !manager.getVertexAt(canvasMousePos)) ||
+                   (event.mouseButton.button == sf::Mouse::Left && sf::Keyboard::isKeyPressed(sf::Keyboard::Space))) {
+                    isPanningCanvas = true;
+                    panStartPixelPos = mousePixelPos;
+                    panStartCenter = canvasView.getCenter();
+                } else if (event.mouseButton.button == sf::Mouse::Left && canvasPixelArea.contains(static_cast<float>(mousePixelPos.x), static_cast<float>(mousePixelPos.y))) {
+                    Vertex* hitVertex = manager.getVertexAt(canvasMousePos);
 
-                        if (currentRect->getGlobalBounds().contains(mousePos)) {
-                            if (isSelectingStartVertex) {
-                                startVertex = currentVertex;
-                                dijkstraResultVertex = nullptr;
-                            }
+                    if (doubleClickClock.getElapsedTime().asMilliseconds() < 300) {
+                        Vertex* spawned = manager.spawnVertexAt(canvasMousePos);
+                        if (!startVertex) startVertex = spawned;
+                        else if (!endVertex && endVertex != startVertex) endVertex = spawned;
+                        resetSolver();
+                    } else {
+                        doubleClickClock.restart();
 
-                            if (isSelectingEndVertex) {
-                                endVertex = currentVertex;
-                                dijkstraResultVertex = nullptr;
-                            }
-
-                            if (isAddingNewLine) {
-                                verticesForNewLine[0] = currentVertex;
-                                tempNewLineCoords[0] = currentRect->getPosition();
+                        switch (currentMode) {
+                        case InteractionMode::MOVE:
+                            if (hitVertex) {
+                                draggedVertex = hitVertex;
                             } else {
-                                oldMousePos = currentRect->getPosition();
-                                movedRect = currentRect;
+                                isPanningCanvas = true;
+                                panStartPixelPos = mousePixelPos;
+                                panStartCenter = canvasView.getCenter();
                             }
-
-                            dragging = true;
+                            break;
+                        case InteractionMode::ADD_NODE:
+                            if (!hitVertex) {
+                                Vertex* spawned = manager.spawnVertexAt(canvasMousePos);
+                                if (!startVertex) startVertex = spawned;
+                                resetSolver();
+                            }
+                            break;
+                        case InteractionMode::ADD_EDGE:
+                            if (hitVertex) {
+                                edgeSourceVertex = hitVertex;
+                            }
+                            break;
+                        case InteractionMode::SET_START:
+                            if (hitVertex) {
+                                startVertex = hitVertex;
+                                if (endVertex == startVertex) endVertex = nullptr;
+                                resetSolver();
+                            }
+                            break;
+                        case InteractionMode::SET_END:
+                            if (hitVertex) {
+                                endVertex = hitVertex;
+                                if (startVertex == endVertex) startVertex = nullptr;
+                                resetSolver();
+                            }
+                            break;
+                        case InteractionMode::DELETE_ITEM:
+                            if (hitVertex) {
+                                if (hitVertex == startVertex) startVertex = nullptr;
+                                if (hitVertex == endVertex) endVertex = nullptr;
+                                manager.removeVertex(hitVertex->vertexName);
+                                resetSolver();
+                            } else {
+                                auto edge = manager.getEdgeAt(canvasMousePos);
+                                if (edge.first != "") {
+                                    manager.removeEdge(edge.first, edge.second);
+                                    resetSolver();
+                                }
+                            }
+                            break;
+                        }
+                    }
+                } else if (event.mouseButton.button == sf::Mouse::Right && canvasPixelArea.contains(static_cast<float>(mousePixelPos.x), static_cast<float>(mousePixelPos.y))) {
+                    Vertex* hitVertex = manager.getVertexAt(canvasMousePos);
+                    if (hitVertex) {
+                        if (hitVertex == startVertex) startVertex = nullptr;
+                        if (hitVertex == endVertex) endVertex = nullptr;
+                        manager.removeVertex(hitVertex->vertexName);
+                        resetSolver();
+                    } else {
+                        auto edge = manager.getEdgeAt(canvasMousePos);
+                        if (edge.first != "") {
+                            manager.removeEdge(edge.first, edge.second);
+                            resetSolver();
                         }
                     }
                 }
             }
 
             if (event.type == sf::Event::MouseButtonReleased) {
+                if (event.mouseButton.button == sf::Mouse::Middle || event.mouseButton.button == sf::Mouse::Right || event.mouseButton.button == sf::Mouse::Left) {
+                    isPanningCanvas = false;
+                }
                 if (event.mouseButton.button == sf::Mouse::Left) {
-                    if (!isCalculating) {
-                        if (isAddingNewLine) {
-                            for (int i = 0; i < vertices->size(); i++) {
-                                Vertex* currentVertex = vertices->at(i);
-                                sf::RectangleShape* currentRect = &currentVertex->vertexRect;
-
-                                if (currentRect->getGlobalBounds().contains(tempNewLineCoords[1])) {
-                                    verticesForNewLine[1] = currentVertex;
-                                }
-                            }
+                    if (draggedVertex) {
+                        draggedVertex = nullptr;
+                        manager.updateEdgeWeights();
+                        resetSolver();
+                    }
+                    if (edgeSourceVertex) {
+                        Vertex* targetVertex = manager.getVertexAt(canvasMousePos);
+                        if (targetVertex && targetVertex != edgeSourceVertex) {
+                            manager.addEdge(edgeSourceVertex->vertexName, targetVertex->vertexName);
+                            resetSolver();
                         }
-
-                        movedRect = nullptr;
-                        dragging = false;
-                        edgeWeightsDirty = true;
+                        edgeSourceVertex = nullptr;
                     }
                 }
             }
 
             if (event.type == sf::Event::MouseMoved) {
-                if (dragging && !isCalculating) {
-                    sf::Vector2f mousePos = window.mapPixelToCoords(sf::Vector2i(event.mouseMove.x, event.mouseMove.y));
-
-                    if (isAddingNewLine) {
-                        tempNewLineCoords[1] = mousePos;
-                    } else {
-                        sf::Vector2f difference = mousePos - oldMousePos;
-                        movedRect->move(difference);
-                        oldMousePos = movedRect->getPosition();
-                        edgeWeightsDirty = true;
-                    }
+                if (isPanningCanvas) {
+                    sf::Vector2i pixelDelta = mousePixelPos - panStartPixelPos;
+                    sf::Vector2f worldDelta(
+                        pixelDelta.x * (canvasView.getSize().x / currentCanvasWidth),
+                        pixelDelta.y * (canvasView.getSize().y / currentCanvasHeight)
+                    );
+                    canvasView.setCenter(panStartCenter - worldDelta);
+                } else if (draggedVertex) {
+                    draggedVertex->setCenterPos(canvasMousePos);
+                    manager.updateEdgeWeights();
                 }
             }
 
-            if (event.type == sf::Event::TextEntered && isReceivingInput && !isCalculating) {
-                if (event.text.unicode < 128) {
-                    if (event.text.unicode == '\b' && inputText.length() != 0) {
-                        inputText.pop_back();
-                    } else if (event.text.unicode != '\r' && event.text.unicode != '\n') {
-                        inputText += static_cast<char>(event.text.unicode);
-                    }
+            // Keyboard Shortcuts
+            if (event.type == sf::Event::KeyPressed) {
+                if (event.key.code == sf::Keyboard::Space) {
+                    isPlaying = !isPlaying;
+                } else if (event.key.code == sf::Keyboard::Right) {
+                    isPlaying = false;
+                    solver.stepForward();
+                } else if (event.key.code == sf::Keyboard::Left) {
+                    isPlaying = false;
+                    solver.stepBackward();
+                } else if (event.key.code == sf::Keyboard::R) {
+                    isPlaying = false;
+                    solver.reset();
+                } else if (event.key.code == sf::Keyboard::F11 || event.key.code == sf::Keyboard::F) {
+                    toggleFullscreen();
+                } else if (event.key.code == sf::Keyboard::Home || event.key.code == sf::Keyboard::Num0) {
+                    resetView();
                 }
             }
 
-            calculateBtn.handleEvent(event, window);
-            addVertexBtn.handleEvent(event, window);
-            addEdgeBtn.handleEvent(event, window);
-            selectStartBtn.handleEvent(event, window);
-            selectEndBtn.handleEvent(event, window);
-            clearVerticesBtn.handleEvent(event, window);
-            addVerticesBtn.handleEvent(event, window);
+            // Handle UI button events cleanly
+            for (Button* btn : modeButtons) btn->handleEvent(event, window);
+            btnPresetDefault.handleEvent(event, window);
+            btnPresetGrid.handleEvent(event, window);
+            btnPresetRandom.handleEvent(event, window);
+            btnPresetClear.handleEvent(event, window);
+            btnResetView.handleEvent(event, window);
+            btnFullscreen.handleEvent(event, window);
+            btnSolve.handleEvent(event, window);
+
+            btnStepBack.handleEvent(event, window);
+            btnPlayPause.handleEvent(event, window);
+            btnStepFwd.handleEvent(event, window);
+            btnReset.handleEvent(event, window);
+
+            btnSpeed1.handleEvent(event, window);
+            btnSpeed2.handleEvent(event, window);
+            btnSpeed5.handleEvent(event, window);
         }
 
-        if (isCalculating && startVertex != nullptr && endVertex != nullptr) {
-            if (isFirstRun) {
-                isFirstRun = false;
-                calculationClock.restart();
-                updateEdgeWeights(manager);
-                edgeWeightsDirty = false;
-                unexplored.clear();
-                explored.clear();
-                manager.resetParentVertices();
-                manager.resetMinDistancesFromSrc();
-
-                for (int i = 0; i < vertices->size(); i++) {
-                    unexplored.push_back(vertices->at(i));
+        // Auto stepping logic
+        if (isPlaying) {
+            btnPlayPause.setButtonText(font, "Pause", 13);
+            btnPlayPause.setColors(sf::Color(234, 88, 12), sf::Color(249, 115, 22), sf::Color::White);
+            if (autoStepClock.getElapsedTime().asSeconds() >= stepDelay) {
+                bool stepped = solver.stepForward();
+                autoStepClock.restart();
+                if (!stepped || solver.isFinished()) {
+                    isPlaying = false;
                 }
-
-                std::vector<Vertex* >::iterator startElement = std::find_if(unexplored.begin(), unexplored.end(), [&startVertex](const Vertex* node) {
-                    return node == startVertex;
-                    });
-
-                std::iter_swap(unexplored.begin(), startElement);
-                unexplored.front()->minDistanceFromSrc = 0;
-
-                system("CLS");
             }
+        } else {
+            btnPlayPause.setButtonText(font, "Play", 13);
+            btnPlayPause.setColors(sf::Color(14, 165, 233), sf::Color(56, 189, 248), sf::Color::White);
+        }
 
-            if (vertexLoopRunning) {
-                manager.sort(unexplored);
-                topUnexplored = unexplored.front();
-                explored.push_back(topUnexplored);
-                topExplored = explored.back();
+        // Update UI Button hover/active states
+        for (size_t i = 0; i < modeButtons.size(); i++) {
+            modeButtons[i]->setActive(static_cast<int>(currentMode) == static_cast<int>(i));
+            modeButtons[i]->update(uiMousePos);
+        }
+        btnPresetDefault.update(uiMousePos);
+        btnPresetGrid.update(uiMousePos);
+        btnPresetRandom.update(uiMousePos);
+        btnPresetClear.update(uiMousePos);
+        btnResetView.update(uiMousePos);
+        btnFullscreen.update(uiMousePos);
+        btnSolve.update(uiMousePos);
 
-                unexploredIterator = unexplored.begin();
-                exploredIterator = explored.begin();
-                vertexLoopRunning = false;
+        btnStepBack.update(uiMousePos);
+        btnPlayPause.update(uiMousePos);
+        btnStepFwd.update(uiMousePos);
+        btnReset.update(uiMousePos);
 
-                srcRectForCalculating = &topExplored->vertexRect;
-                messageInfo = "[GET LOWEST COST UNVISITED NODE] -> " + topExplored->vertexName;
+        btnSpeed1.update(uiMousePos);
+        btnSpeed2.update(uiMousePos);
+        btnSpeed5.update(uiMousePos);
+
+        // Update node visual states
+        const DijkstraSnapshot& snapshot = solver.getCurrentSnapshot();
+        std::vector<std::string> shortestPath = solver.getShortestPath();
+
+        for (Vertex* v : manager.getVertices()) {
+            if (v == startVertex) {
+                v->setState(NodeState::START);
+            } else if (v == endVertex) {
+                v->setState(NodeState::END);
+            } else if (std::find(shortestPath.begin(), shortestPath.end(), v->vertexName) != shortestPath.end()) {
+                v->setState(NodeState::PATH);
+            } else if (v->vertexName == snapshot.currentNode) {
+                v->setState(NodeState::CURRENT);
+            } else if (std::find(snapshot.visitedNodes.begin(), snapshot.visitedNodes.end(), v->vertexName) != snapshot.visitedNodes.end()) {
+                v->setState(NodeState::VISITED);
             } else {
-                if (unexploredIterator == unexplored.end()) {
-                    unexplored.erase(unexplored.begin());
-                    vertexLoopRunning = true;
-                } else {
-                    const std::string& target = (*unexploredIterator)->vertexName;
-
-                    auto foundRelatedVertex = std::find_if(topExplored->neighbors.begin(), topExplored->neighbors.end(), [target](const std::pair<std::string, int>& neighbor) {
-                        return neighbor.first == target;
-                        });
-
-                    if (foundRelatedVertex != topExplored->neighbors.end()) {
-                        int totalDistance = topExplored->minDistanceFromSrc + foundRelatedVertex->second;
-                        messageInfo = "[CALCULATE " + topExplored->vertexName + " -> " + foundRelatedVertex->first + ": (" + std::to_string(totalDistance);
-
-                        if (totalDistance < (*unexploredIterator)->minDistanceFromSrc) {
-                            messageInfo += " < " + std::to_string((*unexploredIterator)->minDistanceFromSrc) + "), UPDATING " + foundRelatedVertex->first + " COST]";
-
-                            (*unexploredIterator)->parent = topExplored;
-                            (*unexploredIterator)->minDistanceFromSrc = totalDistance;
-                        } else {
-                            messageInfo += " > " + std::to_string((*unexploredIterator)->minDistanceFromSrc) + "), MAINTAIN " + foundRelatedVertex->first + " COST]";
-                        }
-
-                        dstRectForCalculating = &(*unexploredIterator)->vertexRect;
-
-                        const int labelFontSize = 20;
-                        int srcPosX = srcRectForCalculating->getPosition().x;
-                        int srcPosY = srcRectForCalculating->getPosition().y;
-                        int dstPosX = dstRectForCalculating->getPosition().x;
-                        int dstPosY = dstRectForCalculating->getPosition().y;
-                        std::string distanceStr = std::to_string(foundRelatedVertex->second);
-                        sf::Vector2f labelPos(srcPosX + (dstPosX - srcPosX) / 2, srcPosY + (dstPosY - srcPosY) / 2);
-                        sf::VertexArray line(sf::Lines, 2);
-
-                        line[0].position = sf::Vector2f(srcPosX, srcPosY);
-                        line[1].position = sf::Vector2f(dstPosX, dstPosY);
-                        window.draw(line);
-                        manager.renderText(distanceStr, labelPos, font1, labelFontSize, WHITE, window);
-                    }
-
-                    unexploredIterator++;
-                }
-            }
-
-            for (int i = 0; i < explored.size(); i++) {
-                Vertex* currentVertex = explored.at(i);
-
-                if (topExplored == currentVertex)
-                    continue;
-
-                srcRect = &currentVertex->vertexRect;
-                int srcPosX = srcRect->getPosition().x;
-                int srcPosY = srcRect->getPosition().y;
-
-                for (std::pair<std::string, int>& currentNeighbor : currentVertex->neighbors) {
-                    Vertex* neighborRelatedVertex = manager.getOneVertex(currentNeighbor.first);
-                    dstRect = &neighborRelatedVertex->vertexRect;
-
-                    const int labelFontSize = 20;
-                    int dstPosX = dstRect->getPosition().x;
-                    int dstPosY = dstRect->getPosition().y;
-                    float length = std::sqrt(std::pow(dstPosX - srcPosX, 2) + std::pow(dstPosY - srcPosY, 2));
-
-                    std::string distanceStr = std::to_string(length).substr(0, 6);
-                    sf::Vector2f labelPos(srcPosX + (dstPosX - srcPosX) / 2, srcPosY + (dstPosY - srcPosY) / 2);
-                    sf::VertexArray line(sf::Lines, 2);
-
-                    currentNeighbor.second = length;
-
-                    line[0].position = sf::Vector2f(srcPosX, srcPosY);
-                    line[1].position = sf::Vector2f(dstPosX, dstPosY);
-
-                    window.draw(line);
-                    manager.renderText(distanceStr, labelPos, font1, labelFontSize, WHITE, window);
-                }
+                v->setState(NodeState::DEFAULT);
             }
         }
 
-        for (int i = 0; i < vertices->size(); i++) {
-            Vertex* currentVertex = vertices->at(i);
-            std::string vertexName = currentVertex->vertexName;
-            sf::RectangleShape* vertexRect = &currentVertex->vertexRect;
-            sf::Vector2f rectPos(vertexRect->getPosition().x, vertexRect->getPosition().y - 25);
-            const int vertexFontSize = 20;
+        // --- RENDER PASS ---
+        window.clear(COLOR_BG);
 
-            if (!isCalculating) {
-                Vertex* pathPtr = dijkstraResultVertex;
+        // A. RENDER CANVAS SCENE (World Space using canvasView)
+        window.setView(canvasView);
 
-                while (pathPtr) {
-                    if (pathPtr == currentVertex)
+        // Draw Canvas Background rect in world space
+        sf::RectangleShape canvasWorldBg(sf::Vector2f(4000.f, 4000.f));
+        canvasWorldBg.setOrigin(2000.f, 2000.f);
+        canvasWorldBg.setPosition(canvasView.getCenter());
+        canvasWorldBg.setFillColor(COLOR_CANVAS);
+        window.draw(canvasWorldBg);
+
+        // Draw Canvas Grid Lines
+        sf::VertexArray gridLines(sf::Lines);
+        const float gridSpacing = 50.f;
+        sf::Vector2f center = canvasView.getCenter();
+        sf::Vector2f size = canvasView.getSize();
+        float left = center.x - size.x / 2.f - gridSpacing;
+        float right = center.x + size.x / 2.f + gridSpacing;
+        float top = center.y - size.y / 2.f - gridSpacing;
+        float bottom = center.y + size.y / 2.f + gridSpacing;
+
+        float startX = std::floor(left / gridSpacing) * gridSpacing;
+        for (float x = startX; x <= right; x += gridSpacing) {
+            gridLines.append(sf::Vertex(sf::Vector2f(x, top), sf::Color(30, 41, 59, 100)));
+            gridLines.append(sf::Vertex(sf::Vector2f(x, bottom), sf::Color(30, 41, 59, 100)));
+        }
+
+        float startY = std::floor(top / gridSpacing) * gridSpacing;
+        for (float y = startY; y <= bottom; y += gridSpacing) {
+            gridLines.append(sf::Vertex(sf::Vector2f(left, y), sf::Color(30, 41, 59, 100)));
+            gridLines.append(sf::Vertex(sf::Vector2f(right, y), sf::Color(30, 41, 59, 100)));
+        }
+        window.draw(gridLines);
+
+        // Draw Edges
+        std::vector<Vertex*>& allVertices = manager.getVertices();
+        for (Vertex* u : allVertices) {
+            sf::Vector2f uPos = u->getCenterPos();
+            for (const auto& neighbor : u->neighbors) {
+                Vertex* v = manager.getOneVertex(neighbor.first);
+                if (!v) continue;
+                if (u->vertexName > v->vertexName) continue;
+
+                sf::Vector2f vPos = v->getCenterPos();
+                sf::Color edgeColor = COLOR_EDGE_DEFAULT;
+                float lineThickness = 3.f;
+
+                bool inPath = false;
+                for (size_t i = 0; i + 1 < shortestPath.size(); i++) {
+                    if ((shortestPath[i] == u->vertexName && shortestPath[i + 1] == v->vertexName) ||
+                        (shortestPath[i] == v->vertexName && shortestPath[i + 1] == u->vertexName)) {
+                        inPath = true;
                         break;
-
-                    pathPtr = pathPtr->parent;
+                    }
                 }
 
-                if (startVertex != nullptr && endVertex != nullptr && startVertex == endVertex)
-                    vertexRect->setFillColor(BLUE);
-                else if (startVertex != nullptr && &startVertex->vertexRect == vertexRect)
-                    vertexRect->setFillColor(GREEN);
-                else if (endVertex != nullptr && &endVertex->vertexRect == vertexRect)
-                    vertexRect->setFillColor(RED);
-                else if (pathPtr != nullptr && startVertex != nullptr && endVertex != nullptr && currentVertex != startVertex && currentVertex!= endVertex)
-                    vertexRect->setFillColor(BLUE);
-                else
-                    vertexRect->setFillColor(WHITE);
+                if (inPath) {
+                    edgeColor = COLOR_EDGE_PATH;
+                    lineThickness = 5.f;
+                } else if ((u->vertexName == snapshot.currentNode && v->vertexName == snapshot.examiningNeighbor) ||
+                           (v->vertexName == snapshot.currentNode && u->vertexName == snapshot.examiningNeighbor)) {
+                    edgeColor = COLOR_EDGE_ACTIVE;
+                    lineThickness = 5.f;
+                }
+
+                drawThickLine(window, uPos, vPos, lineThickness, edgeColor);
+
+                // Draw Edge Weight Badge
+                sf::Vector2f midPos = uPos + (vPos - uPos) / 2.f;
+                sf::Color badgeBg = (edgeColor == COLOR_EDGE_PATH) ? sf::Color(6, 78, 59) :
+                                    (edgeColor == COLOR_EDGE_ACTIVE) ? sf::Color(120, 53, 15) : sf::Color(30, 41, 59);
+                drawEdgeWeightBadge(window, midPos, neighbor.second, font, badgeBg);
+            }
+        }
+
+        // Draw Rubber-Band Line
+        if (currentMode == InteractionMode::ADD_EDGE && edgeSourceVertex) {
+            drawThickLine(window, edgeSourceVertex->getCenterPos(), canvasMousePos, 3.f, COLOR_EDGE_ACTIVE);
+        }
+
+        // Draw Vertices & Labels
+        for (Vertex* v : allVertices) {
+            window.draw(v->vertexCircle);
+
+            sf::Text text;
+            text.setFont(font);
+            text.setString(v->vertexName);
+            text.setCharacterSize(16);
+            text.setFillColor(sf::Color::White);
+            sf::FloatRect textBounds = text.getLocalBounds();
+            text.setOrigin(std::floor(textBounds.left + textBounds.width / 2.f), std::floor(textBounds.top + textBounds.height / 2.f));
+            text.setPosition(std::floor(v->getCenterPos().x), std::floor(v->getCenterPos().y));
+            window.draw(text);
+
+            auto distIt = snapshot.distances.find(v->vertexName);
+            if (distIt != snapshot.distances.end() && distIt->second != INF) {
+                sf::Text distText;
+                distText.setFont(font);
+                distText.setString("d=" + std::to_string(distIt->second));
+                distText.setCharacterSize(12);
+                distText.setFillColor(sf::Color(226, 232, 240));
+                sf::FloatRect dBounds = distText.getLocalBounds();
+                distText.setOrigin(std::floor(dBounds.left + dBounds.width / 2.f), std::floor(dBounds.top + dBounds.height / 2.f));
+                distText.setPosition(std::floor(v->getCenterPos().x), std::floor(v->getCenterPos().y + Vertex::RADIUS + 12.f));
+                window.draw(distText);
+            }
+        }
+
+        // B. RENDER UI OVERLAY SCENE (Screen Space using Default View)
+        window.setView(window.getDefaultView());
+
+        // 1. Left Sidebar Background & Divider
+        sf::RectangleShape sidebarBg(sf::Vector2f(SIDEBAR_WIDTH, static_cast<float>(windowHeight)));
+        sidebarBg.setPosition(0.f, 0.f);
+        sidebarBg.setFillColor(COLOR_SIDEBAR);
+        window.draw(sidebarBg);
+
+        sf::RectangleShape sidebarDivider(sf::Vector2f(2.f, static_cast<float>(windowHeight)));
+        sidebarDivider.setPosition(SIDEBAR_WIDTH, 0.f);
+        sidebarDivider.setFillColor(COLOR_BORDER);
+        window.draw(sidebarDivider);
+
+        auto renderHeader = [&](const std::string& title, float posY) {
+            sf::Text headerText;
+            headerText.setFont(font);
+            headerText.setString(title);
+            headerText.setCharacterSize(13);
+            headerText.setFillColor(COLOR_MUTED);
+            headerText.setPosition(15.f, posY);
+            window.draw(headerText);
+        };
+
+        renderHeader("MODES & GESTURES", 20.f);
+        renderHeader("PRESET TEMPLATES", 310.f);
+        renderHeader("VIEW & DISPLAY", 480.f);
+        renderHeader("ALGORITHM SOLVER", 545.f);
+
+        for (Button* btn : modeButtons) window.draw(*btn);
+        window.draw(btnPresetDefault);
+        window.draw(btnPresetGrid);
+        window.draw(btnPresetRandom);
+        window.draw(btnPresetClear);
+        window.draw(btnResetView);
+        window.draw(btnFullscreen);
+        window.draw(btnSolve);
+
+        // 2. Bottom Playbar Panel
+        sf::RectangleShape playbarBg(sf::Vector2f(currentCanvasWidth, PLAYBAR_HEIGHT));
+        playbarBg.setPosition(SIDEBAR_WIDTH, windowHeight - PLAYBAR_HEIGHT);
+        playbarBg.setFillColor(COLOR_SIDEBAR);
+        window.draw(playbarBg);
+
+        sf::RectangleShape playbarDivider(sf::Vector2f(currentCanvasWidth, 2.f));
+        playbarDivider.setPosition(SIDEBAR_WIDTH, windowHeight - PLAYBAR_HEIGHT);
+        playbarDivider.setFillColor(COLOR_BORDER);
+        window.draw(playbarDivider);
+
+        window.draw(btnStepBack);
+        window.draw(btnPlayPause);
+        window.draw(btnStepFwd);
+        window.draw(btnReset);
+
+        window.draw(btnSpeed1);
+        window.draw(btnSpeed2);
+        window.draw(btnSpeed5);
+
+        float playbarYPos = windowHeight - PLAYBAR_HEIGHT + 18.f;
+        float playbarXPos = SIDEBAR_WIDTH + 15.f;
+
+        sf::Text stepText;
+        stepText.setFont(font);
+        stepText.setString("Step: " + std::to_string(solver.getCurrentStepIndex()) + " / " + (solver.getTotalSteps() > 0 ? std::to_string(solver.getTotalSteps() - 1) : "0"));
+        stepText.setCharacterSize(12);
+        stepText.setFillColor(COLOR_TEXT);
+        stepText.setPosition(playbarXPos + 540.f, playbarYPos);
+        window.draw(stepText);
+
+        // 3. Right Inspector Panel Background & Divider
+        float inspX = windowWidth - INSPECTOR_WIDTH + 15.f;
+
+        sf::RectangleShape inspectorBg(sf::Vector2f(INSPECTOR_WIDTH, static_cast<float>(windowHeight)));
+        inspectorBg.setPosition(windowWidth - INSPECTOR_WIDTH, 0.f);
+        inspectorBg.setFillColor(COLOR_SIDEBAR);
+        window.draw(inspectorBg);
+
+        sf::RectangleShape inspectorDivider(sf::Vector2f(2.f, static_cast<float>(windowHeight)));
+        inspectorDivider.setPosition(windowWidth - INSPECTOR_WIDTH, 0.f);
+        inspectorDivider.setFillColor(COLOR_BORDER);
+        window.draw(inspectorDivider);
+
+        sf::Text inspHeader;
+        inspHeader.setFont(font);
+        inspHeader.setString("INSPECTOR & STATE");
+        inspHeader.setCharacterSize(13);
+        inspHeader.setFillColor(COLOR_MUTED);
+        inspHeader.setPosition(inspX, 20.f);
+        window.draw(inspHeader);
+
+        // Algorithm Description Message
+        sf::Text msgText;
+        msgText.setFont(font);
+        msgText.setString(snapshot.message.empty() ? "Click 'RUN DIJKSTRA' to begin visualization." : snapshot.message);
+        msgText.setCharacterSize(13);
+        msgText.setFillColor(sf::Color(253, 230, 138));
+
+        std::string rawMsg = msgText.getString();
+        std::string wrappedMsg = "";
+        float currentLineWidth = 0.f;
+        std::istringstream wordsStream(rawMsg);
+        std::string word;
+        while (wordsStream >> word) {
+            sf::Text dummyText;
+            dummyText.setFont(font);
+            dummyText.setCharacterSize(13);
+            dummyText.setString(word + " ");
+            float w = dummyText.getLocalBounds().width;
+            if (currentLineWidth + w > INSPECTOR_WIDTH - 30.f) {
+                wrappedMsg += "\n";
+                currentLineWidth = 0.f;
+            }
+            wrappedMsg += word + " ";
+            currentLineWidth += w;
+        }
+        msgText.setString(wrappedMsg);
+        msgText.setPosition(inspX, 45.f);
+        window.draw(msgText);
+
+        // Distance Table
+        sf::Text tableHeader;
+        tableHeader.setFont(font);
+        tableHeader.setString("DISTANCE TABLE");
+        tableHeader.setCharacterSize(13);
+        tableHeader.setFillColor(COLOR_MUTED);
+        tableHeader.setPosition(inspX, 150.f);
+        window.draw(tableHeader);
+
+        sf::Text colHeader;
+        colHeader.setFont(font);
+        colHeader.setString("Node    Min Dist    Parent");
+        colHeader.setCharacterSize(12);
+        colHeader.setFillColor(COLOR_BORDER);
+        colHeader.setPosition(inspX, 175.f);
+        window.draw(colHeader);
+
+        float rowY = 198.f;
+        for (Vertex* v : allVertices) {
+            if (rowY > windowHeight - 160.f) break;
+
+            std::string nameStr = v->vertexName;
+            auto dIt = snapshot.distances.find(nameStr);
+            std::string distStr = (dIt != snapshot.distances.end() && dIt->second != INF) ? std::to_string(dIt->second) : "INF";
+
+            auto pIt = snapshot.parents.find(nameStr);
+            std::string parentStr = (pIt != snapshot.parents.end() && !pIt->second.empty()) ? pIt->second : "-";
+
+            std::stringstream ss;
+            ss << std::left << std::setw(8) << nameStr
+               << std::setw(12) << distStr
+               << parentStr;
+
+            sf::Text rowText;
+            rowText.setFont(font);
+            rowText.setString(ss.str());
+            rowText.setCharacterSize(12);
+            rowText.setFillColor(v->vertexName == snapshot.currentNode ? sf::Color(253, 230, 138) : COLOR_TEXT);
+            rowText.setPosition(inspX, rowY);
+            window.draw(rowText);
+
+            rowY += 19.f;
+        }
+
+        // Shortest Path Summary
+        if (snapshot.isFinished) {
+            sf::Text resHeader;
+            resHeader.setFont(font);
+            resHeader.setString("SHORTEST PATH");
+            resHeader.setCharacterSize(13);
+            resHeader.setFillColor(COLOR_MUTED);
+            resHeader.setPosition(inspX, windowHeight - 145.f);
+            window.draw(resHeader);
+
+            sf::Text resText;
+            resText.setFont(font);
+            resText.setCharacterSize(12);
+            if (snapshot.pathFound && endVertex) {
+                std::string pathStr = "";
+                for (size_t i = 0; i < shortestPath.size(); i++) {
+                    pathStr += shortestPath[i] + (i + 1 < shortestPath.size() ? " -> " : "");
+                }
+                resText.setString("Path: " + pathStr + "\nCost: " + std::to_string(snapshot.distances.at(endVertex->vertexName)));
+                resText.setFillColor(sf::Color(52, 211, 153));
             } else {
-                if (topExplored == currentVertex)
-                    vertexRect->setFillColor(GREEN);
-                else
-                    vertexRect->setFillColor(WHITE);
+                resText.setString("No path exists between\nStart and End node.");
+                resText.setFillColor(sf::Color(248, 113, 113));
             }
-
-            window.draw(*vertexRect);
-            manager.renderText(vertexName, rectPos, font1, vertexFontSize, WHITE, window);
-
-            srcRect = &currentVertex->vertexRect;
-            int srcPosX = srcRect->getPosition().x;
-            int srcPosY = srcRect->getPosition().y;
-
-            for (std::pair<std::string, int>& currentNeighbor : currentVertex->neighbors) {
-                Vertex* neighborRelatedVertex = manager.getOneVertex(currentNeighbor.first);
-                dstRect = &neighborRelatedVertex->vertexRect;
-
-                const int labelFontSize = 20;
-                int dstPosX = dstRect->getPosition().x;
-                int dstPosY = dstRect->getPosition().y;
-                std::string distanceStr = std::to_string(currentNeighbor.second);
-                sf::Vector2f labelPos(srcPosX + (dstPosX - srcPosX) / 2, srcPosY + (dstPosY - srcPosY) / 2);
-                sf::VertexArray line(sf::Lines, 2);
-
-                line[0].position = sf::Vector2f(srcPosX, srcPosY);
-                line[1].position = sf::Vector2f(dstPosX, dstPosY);
-
-                if (!isCalculating) {
-                    window.draw(line);
-                    manager.renderText(distanceStr, labelPos, font1, labelFontSize, WHITE, window);
-                }
-            }
+            resText.setPosition(inspX, windowHeight - 123.f);
+            window.draw(resText);
         }
 
-        if (unexplored.empty() && isCalculating) {
-            isCalculating = false;
-            messageInfo = "";
+        // Controls Hint Footer (Placed cleanly at the absolute bottom of Inspector Panel)
+        sf::Text helpText;
+        helpText.setFont(font);
+        helpText.setString("Scroll: Zoom | Drag/Middle: Pan\nF11: Fullscreen | Home: Reset View");
+        helpText.setCharacterSize(11);
+        helpText.setFillColor(COLOR_MUTED);
+        helpText.setPosition(inspX, windowHeight - 45.f);
+        window.draw(helpText);
 
-            auto foundDijkstraResult = std::find_if(explored.begin(), explored.end(), [&endVertex](const Vertex* currentVertex) {
-                return currentVertex == endVertex;
-                });
-
-            if (foundDijkstraResult != explored.end()) {
-                dijkstraResultVertex = (*foundDijkstraResult);
-                Vertex* pathPtr = dijkstraResultVertex;
-                const sf::Time calculationTime = calculationClock.getElapsedTime();
-
-                std::cout << "Calculation time: " << calculationTime.asMilliseconds() << " ms\n";
-
-                while (pathPtr) {
-                    messageInfo = pathPtr->vertexName + (messageInfo == "" ? "" : " -> " + messageInfo);
-                    pathPtr = pathPtr->parent;
-                }
-
-                messageInfo = "Path: " + messageInfo;
-                messageInfo += "\nCalculation time: " + std::to_string(calculationTime.asMilliseconds()) + " ms";
-            }
-        }
-
-        userInputText.setString("Vertex name: " + inputText);
-
-        float lastLetterCursosPos = userInputText.findCharacterPos(userInputText.getString().getSize()).x;
-        cursorPos.x = lastLetterCursosPos;
-        cursor.setPosition(cursorPos);
-
-
-        if (isAddingNewLine) {
-            addEdgeBtn.setButtonText(font1, "Done", 24);
-
-            if (dragging) {
-                if (
-                    (tempNewLineCoords[0].x != 0 && tempNewLineCoords[0].y != 0) &&
-                    (tempNewLineCoords[1].x != 0 && tempNewLineCoords[1].y != 0)
-                    ) {
-                    sf::VertexArray line(sf::Lines, 2);
-                    line[0].position = tempNewLineCoords[0];
-                    line[1].position = tempNewLineCoords[1];
-
-                    window.draw(line);
-                }
-            }
-        } else {
-            addEdgeBtn.setButtonText(font1, "Add Edge", 24);
-        }
-
-        if (verticesForNewLine[0] != nullptr && verticesForNewLine[1] != nullptr) {
-            std::string vertex0Name = verticesForNewLine[0]->vertexName;
-            std::string vertex1Name = verticesForNewLine[1]->vertexName;
-
-            verticesForNewLine[0]->neighbors.push_back(std::pair<std::string, int>(vertex1Name, 0));
-            verticesForNewLine[1]->neighbors.push_back(std::pair<std::string, int>(vertex0Name, 0));
-
-            verticesForNewLine[0] = nullptr;
-            verticesForNewLine[1] = nullptr;
-
-            tempNewLineCoords[0] = sf::Vector2f(0, 0);
-            tempNewLineCoords[1] = sf::Vector2f(0, 0);
-            edgeWeightsDirty = true;
-        }
-
-        if (edgeWeightsDirty && !isCalculating) {
-            updateEdgeWeights(manager);
-            edgeWeightsDirty = false;
-        }
-
-        if (cursorClock.getElapsedTime().asSeconds() >= 0.5f) {
-            showCursor = !showCursor;
-            cursorClock.restart();
-        }
-
-        if (isReceivingInput) {
-            addVertexBtn.setButtonText(font1, "Done", 24);
-            window.draw(userInputText);
-
-            if (showCursor) {
-                window.draw(cursor);
-            }
-        } else {
-            addVertexBtn.setButtonText(font1, "Add Vertex", 24);
-            inputText = "";
-        }
-
-        if (!isCalculating || !startVertex || !endVertex) {
-            window.draw(calculateBtn);
-            window.draw(addVertexBtn);
-            window.draw(addEdgeBtn);
-            window.draw(selectStartBtn);
-            window.draw(selectEndBtn);
-            window.draw(clearVerticesBtn);
-            window.draw(addVerticesBtn);
-        }
-
-        messageText.setString(messageInfo);
-        window.draw(messageText);
         window.display();
     }
 
     return 0;
-}
-
-void addVertexFromUser(GraphManager& manager, std::string& inputText) {
-    const int newVertexPosX = 100;
-    const int newVertexPosY = 500;
-
-    manager.createVertex(inputText, std::vector<std::pair<std::string, int>>{}, newVertexPosX, newVertexPosY);
-}
-
-void addVerticesToManager(GraphManager& manager) {
-    std::vector<std::pair<std::string, int>> vertexA = {
-        std::pair<std::string, int>("B", 0),
-        std::pair<std::string, int>("C", 0),
-        std::pair<std::string, int>("D", 0),
-        std::pair<std::string, int>("G", 0)
-    };
-
-    std::vector<std::pair<std::string, int>> vertexB = {
-        std::pair<std::string, int>("A", 0),
-        std::pair<std::string, int>("C", 0),
-        std::pair<std::string, int>("F", 0),
-        std::pair<std::string, int>("G", 0)
-    };
-
-    std::vector<std::pair<std::string, int>> vertexC = {
-        std::pair<std::string, int>("A", 0),
-        std::pair<std::string, int>("B", 0),
-        std::pair<std::string, int>("D", 0),
-        std::pair<std::string, int>("E", 0)
-    };
-
-    std::vector<std::pair<std::string, int>> vertexD = {
-        std::pair<std::string, int>("A", 0),
-        std::pair<std::string, int>("C", 0),
-        std::pair<std::string, int>("E", 0),
-        std::pair<std::string, int>("H", 0)
-    };
-
-    std::vector<std::pair<std::string, int>> vertexE = {
-        std::pair<std::string, int>("C", 0),
-        std::pair<std::string, int>("D", 0),
-        std::pair<std::string, int>("F", 0)
-    };
-
-    std::vector<std::pair<std::string, int>> vertexF = {
-        std::pair<std::string, int>("E", 0),
-        std::pair<std::string, int>("B", 0),
-        std::pair<std::string, int>("H", 0)
-    };
-
-    std::vector<std::pair<std::string, int>> vertexG = {
-        std::pair<std::string, int>("A", 0),
-        std::pair<std::string, int>("B", 0)
-    };
-    
-    std::vector<std::pair<std::string, int>> vertexH = {
-        std::pair<std::string, int>("F", 0),
-        std::pair<std::string, int>("D", 0)
-    };
-
-    manager.createVertex("A", vertexA, 500, 400);
-    manager.createVertex("B", vertexB, 540, 80);
-    manager.createVertex("C", vertexC, 800, 200);
-    manager.createVertex("D", vertexD, 840, 450);
-    manager.createVertex("E", vertexE, 900, 175);
-    manager.createVertex("F", vertexF, 1000, 100);
-    manager.createVertex("G", vertexG, 300, 260);
-    manager.createVertex("H", vertexH, 1050, 300);
-}
-
-void addVertexToManager(
-    GraphManager& manager, std::string vertexName,
-    std::vector<std::pair<std::string, int>> neighbors
-) {
-    manager.createVertex(vertexName, neighbors, 10, 200);
-}
-
-void updateEdgeWeights(GraphManager& manager) {
-    std::vector<Vertex*>* vertices = manager.getVertices();
-
-    for (Vertex* sourceVertex : *vertices) {
-        const int sourceX = sourceVertex->vertexRect.getPosition().x;
-        const int sourceY = sourceVertex->vertexRect.getPosition().y;
-
-        for (std::pair<std::string, int>& neighbor : sourceVertex->neighbors) {
-            Vertex* targetVertex = manager.getOneVertex(neighbor.first);
-
-            if (targetVertex == nullptr) {
-                continue;
-            }
-
-            const int targetX = targetVertex->vertexRect.getPosition().x;
-            const int targetY = targetVertex->vertexRect.getPosition().y;
-            const int deltaX = targetX - sourceX;
-            const int deltaY = targetY - sourceY;
-
-            neighbor.second = static_cast<int>(std::round(std::sqrt((deltaX * deltaX) + (deltaY * deltaY))));
-        }
-    }
 }

@@ -1,5 +1,6 @@
+#!/bin/bash
 SFML_PREFIX="$(brew --prefix sfml@2)"
-g++ -std=c++17 main.cpp Button.cpp Graph.cpp GraphManager.cpp Vertex.cpp \
+g++ -std=c++17 -Wno-deprecated-declarations main.cpp Button.cpp Graph.cpp GraphManager.cpp Vertex.cpp \
 	-I"$SFML_PREFIX/include" \
 	-L"$SFML_PREFIX/lib" \
 	-o build/dijkstra-visualizer \

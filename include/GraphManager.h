@@ -2,25 +2,50 @@
 
 #include <SFML/Graphics.hpp>
 #include <vector>
+#include <string>
 #include <algorithm>
+#include <utility>
 
 #include "Vertex.h"
 
+struct EdgeInfo {
+    std::string u;
+    std::string v;
+    int weight;
+};
+
 class GraphManager {
 public:
-    inline GraphManager() {};
+    GraphManager();
     ~GraphManager();
 
-    void createVertex(std::string vertex, std::vector<std::pair<std::string, int>> neighbors, float posX, float posY);
-    void renderText(std::string label, sf::Vector2f pos, sf::Font& font, int size, sf::Color color, sf::RenderWindow& window);
+    Vertex* createVertex(const std::string& name, sf::Vector2f centerPos, const std::vector<std::pair<std::string, int>>& neighbors = {});
+    Vertex* spawnVertexAt(sf::Vector2f centerPos);
+    
+    void removeVertex(const std::string& name);
+    bool addEdge(const std::string& u, const std::string& v);
+    bool removeEdge(const std::string& u, const std::string& v);
+    bool hasEdge(const std::string& u, const std::string& v) const;
 
-    Vertex* getOneVertex(std::string vertexName);
-    std::vector<Vertex* >* getVertices();
-    void sort(std::vector<Vertex* >& list);
-    void resetParentVertices();
-    void resetMinDistancesFromSrc();
+    Vertex* getOneVertex(const std::string& vertexName);
+    Vertex* getVertexAt(sf::Vector2f pos);
+    std::pair<std::string, std::string> getEdgeAt(sf::Vector2f pos, float threshold = 8.f);
+
+    std::vector<Vertex*>& getVertices();
+    const std::vector<Vertex*>& getVertices() const;
+
+    void updateEdgeWeights();
+    void resetGraphStates(Vertex* start = nullptr, Vertex* end = nullptr);
     void clearVertices();
 
+    // Preset Graphs
+    void loadDefaultPreset();
+    void loadGridPreset();
+    void loadRandomPreset();
+
+    std::string generateNextVertexName();
+
 private:
-    std::vector<Vertex* > vertices;
+    std::vector<Vertex*> vertices;
+    int nameCounter = 0;
 };
