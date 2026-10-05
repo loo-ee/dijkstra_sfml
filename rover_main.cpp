@@ -201,28 +201,57 @@ int main() {
         // Active Camera (Smoothly blends Orbit, Chase, or Mast Camera)
         Camera3D activeCamera = rover.getCamera(cameraController.getCamera());
 
-        // Update Orbital Camera (only when in Orbit mode)
+        // Check if cursor is over any active 2D HUD cards
+        Vector2 mousePos = GetMousePosition();
+        int screenW = GetScreenWidth();
+        int screenH = GetScreenHeight();
+
+        bool isOverUI = false;
+        if (showHUD) {
+            Rectangle hudRect = { 16.0f, 16.0f, 440.0f, 326.0f };
+            Rectangle legRect = { 16.0f, 326.0f + 16.0f + 8.0f, 440.0f, 88.0f };
+            int deckH = 92;
+            Rectangle deckRect = { 16.0f, (float)(screenH - deckH - 16), (float)(screenW - 32), (float)deckH };
+            Rectangle telemRect = { (float)(screenW - 340 - 16), 16.0f, 340.0f, 505.0f };
+
+            if (CheckCollisionPointRec(mousePos, hudRect) ||
+                CheckCollisionPointRec(mousePos, legRect) ||
+                CheckCollisionPointRec(mousePos, deckRect) ||
+                CheckCollisionPointRec(mousePos, telemRect)) {
+                isOverUI = true;
+            }
+        } else {
+            Rectangle btnRect = { (float)(screenW - 150 - 16), 16.0f, 150.0f, 32.0f };
+            if (CheckCollisionPointRec(mousePos, btnRect)) {
+                isOverUI = true;
+            }
+        }
+
+        // Update Orbital Camera (only when in Orbit mode, ignoring inputs over UI cards)
         if (rover.getCameraMode() == RoverCameraMode::ORBIT) {
-            cameraController.update();
+            cameraController.update(isOverUI);
         }
 
         // Update Dijkstra Step-by-Step Playback
         dijkstra.update(dt);
 
-        // 3D Raycast Mouse Picking for Nodes
-        Ray mouseRay = GetMouseRay(GetMousePosition(), activeCamera);
-        Vertex3D* hoveredNode = navGraph.pickNodeFromRay(mouseRay, 1.8f);
+        // 3D Raycast Mouse Picking for Nodes (prevent picking if clicking on UI cards)
+        Vertex3D* hoveredNode = nullptr;
+        if (!isOverUI) {
+            Ray mouseRay = GetMouseRay(mousePos, activeCamera);
+            hoveredNode = navGraph.pickNodeFromRay(mouseRay, 1.8f);
 
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-            if (hoveredNode) {
-                if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) {
-                    navGraph.setEndNode(hoveredNode);
-                } else {
-                    navGraph.setStartNode(hoveredNode);
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                if (hoveredNode) {
+                    if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) {
+                        navGraph.setEndNode(hoveredNode);
+                    } else {
+                        navGraph.setStartNode(hoveredNode);
+                    }
+                    dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
+                                              navGraph.getVertices(), navGraph.getBlockedEdgesMap());
+                    rover.setPath(dijkstra.getShortestPathNodes());
                 }
-                dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
-                                          navGraph.getVertices(), navGraph.getBlockedEdgesMap());
-                rover.setPath(dijkstra.getShortestPathNodes());
             }
         }
 
@@ -256,9 +285,12 @@ int main() {
             rover.setPath(dijkstra.getShortestPathNodes());
         }
 
-        // Phase 5: Planetary Rover Driving Controls
-        if (IsKeyPressed(KEY_TAB) || IsKeyPressed(KEY_F)) {
+        // Phase 5: Planetary Rover Driving Controls & Camera Focus
+        if (IsKeyPressed(KEY_TAB)) {
             rover.toggleAutonomous();
+        }
+        if (IsKeyPressed(KEY_F)) {
+            cameraController.focusOn(rover.getPosition(), 22.0f);
         }
         if (IsKeyPressed(KEY_M)) {
             terrain.cyclePreset();
@@ -640,17 +672,18 @@ int main() {
             int c1X = deckX + 16;
             DrawText("CAMERA CONTROLS", c1X, deckY + 10, 10, Color{ 100, 185, 255, 255 });
             DrawKeyBind(c1X, deckY + 28, "RMB Drag", "Orbit");
-            DrawKeyBind(c1X + 105, deckY + 28, "Wheel", "Zoom");
-            DrawKeyBind(c1X, deckY + 54, "V", "Cycle View (Orbit/Chase/Mast)");
+            DrawKeyBind(c1X + 105, deckY + 28, "Wheel", "Zoom to Cursor");
+            DrawKeyBind(c1X, deckY + 54, "MMB / Shift+RMB", "Pan");
+            DrawKeyBind(c1X + 145, deckY + 54, "F", "Focus Rover");
 
             // --- Column 2: Rover Navigation ---
             int c2X = deckX + 16 + static_cast<int>(colW);
             DrawLine(c2X - 12, deckY + 10, c2X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
             DrawText("ROVER NAVIGATION", c2X, deckY + 10, 10, Color{ 46, 204, 113, 255 });
-            DrawKeyBind(c2X, deckY + 28, "Tab / F", rover.isAutonomous() ? "Pause Auto" : "Auto Drive");
-            DrawKeyBind(c2X + 130, deckY + 28, "WASD", "Manual Steer");
+            DrawKeyBind(c2X, deckY + 28, "Tab", rover.isAutonomous() ? "Pause Auto" : "Auto Drive");
+            DrawKeyBind(c2X + 115, deckY + 28, "WASD", "Manual Steer");
             DrawKeyBind(c2X, deckY + 54, "R", "Reset Rover");
-            DrawKeyBind(c2X + 130, deckY + 54, "G", (physics.getGravity() < -6.0f) ? "Grav: Earth" : "Grav: Mars");
+            DrawKeyBind(c2X + 115, deckY + 54, "G", (physics.getGravity() < -6.0f) ? "Grav: Earth" : "Grav: Mars");
 
             // --- Column 3: Terrain & Dijkstra ---
             int c3X = deckX + 16 + static_cast<int>(colW * 2);
@@ -666,10 +699,10 @@ int main() {
             DrawLine(c4X - 12, deckY + 10, c4X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
             DrawText("VIEW & HUD TOGGLES", c4X, deckY + 10, 10, Color{ 190, 160, 240, 255 });
             DrawKeyBind(c4X, deckY + 28, "H", "Toggle HUD");
-            DrawKeyBind(c4X + 105, deckY + 28, "T", "Terrain");
-            DrawKeyBind(c4X, deckY + 54, "O", "Rocks");
-            DrawKeyBind(c4X + 85, deckY + 54, "B", "Drop Rock");
-            DrawKeyBind(c4X + 175, deckY + 54, "C", "Clear");
+            DrawKeyBind(c4X + 105, deckY + 28, "V", "Cam Mode");
+            DrawKeyBind(c4X, deckY + 54, "B / X", "Drop Rocks");
+            DrawKeyBind(c4X + 90, deckY + 54, "C", "Clear");
+            DrawKeyBind(c4X + 155, deckY + 54, "T", "Terrain");
         } else {
             // Interactive floating button when HUD is hidden
             int btnW = 150;

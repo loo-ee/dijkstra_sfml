@@ -16,25 +16,53 @@ public:
         m_camera.projection = CAMERA_PERSPECTIVE;
     }
 
-    void update() {
+    void update(bool isMouseOverUI = false) {
+        if (isMouseOverUI) return;
+
         Vector2 mouseDelta = GetMouseDelta();
         float wheel = GetMouseWheelMove();
 
-        // 1. Zoom: Mouse wheel adjusts distance along camera forward vector
+        // 1. Zoom to Mouse Cursor (zooms directly into any terrain point under cursor)
         if (wheel != 0.0f) {
-            Vector3 forward = Vector3Subtract(m_camera.target, m_camera.position);
-            float dist = Vector3Length(forward);
+            Vector3 camToTarget = Vector3Subtract(m_camera.target, m_camera.position);
+            float dist = Vector3Length(camToTarget);
+
             if (dist > 0.001f) {
-                Vector3 normForward = Vector3Scale(forward, 1.0f / dist);
-                float zoomStep = dist * 0.12f * wheel;
-                float newDist = dist - zoomStep;
-                if (newDist < 2.0f) newDist = 2.0f;
-                if (newDist > 500.0f) newDist = 500.0f;
-                m_camera.position = Vector3Subtract(m_camera.target, Vector3Scale(normForward, newDist));
+                Vector3 viewDir = Vector3Normalize(camToTarget);
+                Vector2 mousePos = GetMousePosition();
+                Ray mouseRay = GetMouseRay(mousePos, m_camera);
+
+                // Find 3D intersection point on the plane passing through target perpendicular to view direction
+                float denom = Vector3DotProduct(viewDir, mouseRay.direction);
+                Vector3 focusPoint = m_camera.target;
+
+                if (fabsf(denom) > 0.01f) {
+                    float t = dist / denom;
+                    if (t > 0.1f && t < 2000.0f) {
+                        focusPoint = Vector3Add(mouseRay.position, Vector3Scale(mouseRay.direction, t));
+                    }
+                }
+
+                // Smooth exponential zoom factor based on wheel delta
+                float zoomFactor = powf(0.85f, wheel);
+                zoomFactor = Clamp(zoomFactor, 0.3f, 3.0f);
+                float newDist = dist * zoomFactor;
+
+                if (newDist >= 3.0f && newDist <= 600.0f) {
+                    // Scale position and target relative to the cursor focal point
+                    // This keeps the 3D point under the mouse cursor stationary on the screen!
+                    m_camera.position = Vector3Add(focusPoint, Vector3Scale(Vector3Subtract(m_camera.position, focusPoint), zoomFactor));
+                    m_camera.target   = Vector3Add(focusPoint, Vector3Scale(Vector3Subtract(m_camera.target, focusPoint), zoomFactor));
+
+                    // Keep camera safely above target height
+                    if (m_camera.position.y < m_camera.target.y + 0.8f) {
+                        m_camera.position.y = m_camera.target.y + 0.8f;
+                    }
+                }
             }
         }
 
-        // 2. Pan: Middle-click drag shifts target and position in camera screen plane
+        // 2. Pan: Middle-click drag or Shift+RMB shifts target and position in camera screen plane
         if (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE) || 
             (IsKeyDown(KEY_LEFT_SHIFT) && IsMouseButtonDown(MOUSE_BUTTON_RIGHT))) {
             Vector3 forward = Vector3Normalize(Vector3Subtract(m_camera.target, m_camera.position));
@@ -85,6 +113,18 @@ public:
 
     Camera3D& getCamera() { return m_camera; }
     const Camera3D& getCamera() const { return m_camera; }
+
+    void focusOn(Vector3 newTarget, float distance = 25.0f) {
+        Vector3 toCam = Vector3Subtract(m_camera.position, m_camera.target);
+        Vector3 viewDir = Vector3Normalize(toCam);
+        if (Vector3Length(viewDir) < 0.1f) viewDir = Vector3{ 0.0f, 0.6f, 0.8f };
+
+        m_camera.target = newTarget;
+        m_camera.position = Vector3Add(newTarget, Vector3Scale(viewDir, distance));
+        if (m_camera.position.y < m_camera.target.y + 1.0f) {
+            m_camera.position.y = m_camera.target.y + 1.0f;
+        }
+    }
 
     void reset(Vector3 position = { 0.0f, 65.0f, 100.0f }, Vector3 target = { 0.0f, 0.0f, 0.0f }) {
         m_camera.position = position;
