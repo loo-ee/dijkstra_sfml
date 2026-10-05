@@ -11,11 +11,18 @@ BUILD_DIR = build
 WASM_BUILD_DIR = $(BUILD_DIR)/wasm
 TARGET_PORTFOLIO_DIR = /Users/louie/Documents/GitHub/portfolio/frontend/public/wasm/sfml
 
-# Native Desktop Flags
+# Native Desktop Flags (SFML Legacy)
 SFML_PREFIX ?= $(shell brew --prefix sfml@2 2>/dev/null || echo "/opt/homebrew")
 NATIVE_CXXFLAGS = -std=c++17 -Wno-deprecated-declarations -I"$(SFML_PREFIX)/include"
 NATIVE_LDFLAGS = -L"$(SFML_PREFIX)/lib" -lsfml-graphics -lsfml-window -lsfml-system -lsfml-audio
 DESKTOP_TARGET = $(BUILD_DIR)/dijkstra-visualizer
+
+# Native 3D Simulation Flags (Raylib 6.0+)
+RAYLIB_PREFIX ?= $(shell brew --prefix raylib 2>/dev/null || echo "/opt/homebrew")
+RAYLIB_CXXFLAGS = -std=c++17 -Wall -I"$(RAYLIB_PREFIX)/include"
+RAYLIB_LDFLAGS  = -L"$(RAYLIB_PREFIX)/lib" -lraylib \
+                  -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
+ROVER_TARGET = $(BUILD_DIR)/rover-simulator
 
 # Emscripten WebAssembly Flags (SDL2 + SDL2_ttf WebGL backend)
 EMCC_FLAGS = -s WASM=1 \
@@ -26,7 +33,7 @@ EMCC_FLAGS = -s WASM=1 \
              -O3
 WASM_TARGET = $(WASM_BUILD_DIR)/index.html
 
-.PHONY: all wasm desktop run-desktop deploy clean help
+.PHONY: all wasm desktop run-desktop deploy clean check-raylib help
 
 all: wasm
 
@@ -57,10 +64,22 @@ clean:
 	rm -rf $(BUILD_DIR)
 	@echo "Cleaned build directory."
 
+# Check Raylib Configuration
+check-raylib:
+	@echo "Checking Raylib installation at $(RAYLIB_PREFIX)..."
+	@test -f "$(RAYLIB_PREFIX)/include/raylib.h" && \
+		echo "✓ Raylib header found: $(RAYLIB_PREFIX)/include/raylib.h" || \
+		(echo "✗ Raylib header not found! Run: brew install raylib" && exit 1)
+	@test -f "$(RAYLIB_PREFIX)/lib/libraylib.dylib" -o -f "$(RAYLIB_PREFIX)/lib/libraylib.a" && \
+		echo "✓ Raylib library found in $(RAYLIB_PREFIX)/lib" || \
+		(echo "✗ Raylib library not found! Run: brew install raylib" && exit 1)
+	@echo "✓ Raylib is ready for 3D Rover Simulation builds."
+
 help:
 	@echo "Available Makefile targets:"
-	@echo "  make wasm        - Compile WebAssembly bundle to build/wasm/index.html"
-	@echo "  make deploy      - Build WASM and copy assets to portfolio frontend directory"
-	@echo "  make desktop     - Build native desktop binary"
-	@echo "  make run-desktop - Build and execute native desktop app"
-	@echo "  make clean       - Remove build artifacts"
+	@echo "  make check-raylib - Verify Raylib installation and paths"
+	@echo "  make wasm         - Compile WebAssembly bundle to build/wasm/index.html"
+	@echo "  make deploy       - Build WASM and copy assets to portfolio frontend directory"
+	@echo "  make desktop      - Build native desktop binary (SFML legacy)"
+	@echo "  make run-desktop  - Build and execute native desktop app"
+	@echo "  make clean        - Remove build artifacts"
