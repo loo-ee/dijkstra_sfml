@@ -195,11 +195,18 @@ int main() {
         // Render Frame
         BeginDrawing();
 
-        // Atmospheric Sky Gradient: deep indigo space to warm dusky Martian horizon
+        // 1. Explicitly clear Color and Depth buffers (essential for 3D camera rotation)
+        ClearBackground(Color{ 12, 14, 24, 255 });
+
+        // 2. Atmospheric Sky Gradient (2D background with depth testing disabled)
+        rlDisableDepthMask();
+        rlDisableDepthTest();
         DrawRectangleGradientV(0, 0, GetScreenWidth(), GetScreenHeight(), 
             Color{ 12, 14, 24, 255 }, 
             Color{ 72, 38, 30, 255 }
         );
+        rlEnableDepthTest();
+        rlEnableDepthMask();
 
         // 3D Scene Rendering
         BeginMode3D(cameraController.getCamera());
@@ -290,28 +297,28 @@ int main() {
             // ----------------------------------------------------
             int hudX = 16;
             int hudY = 16;
-            int hudW = 400;
+            int hudW = 425;
             int hudH = 265;
             Rectangle hudRect = { (float)hudX, (float)hudY, (float)hudW, (float)hudH };
             DrawRectangleRounded(hudRect, 0.04f, 4, ColorAlpha(Color{ 10, 14, 24, 255 }, 0.92f));
             DrawRectangleRoundedLines(hudRect, 0.04f, 4, Color{ 48, 68, 98, 255 });
             DrawRectangle(hudX + 1, hudY + 1, hudW - 2, 3, Color{ 230, 95, 45, 255 }); // Martian Ochre accent
 
-            DrawText("MARTIAN ROVER MISSION TELEMETRY", hudX + 16, hudY + 14, 14, RAYWHITE);
+            DrawText("MARTIAN ROVER MISSION TELEMETRY", hudX + 16, hudY + 14, 13, RAYWHITE);
             DrawText("Phase 3: Jolt Physics & NavMesh", hudX + 16, hudY + 32, 11, Color{ 145, 175, 205, 255 });
 
             // FPS & Physics Sub-step Badges
             int curFPS = GetFPS();
             Color fpsColor = (curFPS >= 55) ? Color{ 46, 204, 113, 255 } : Color{ 241, 196, 15, 255 };
-            DrawText(TextFormat("FPS: %i", curFPS), hudX + hudW - 120, hudY + 14, 13, fpsColor);
-            DrawText("Step: 60Hz", hudX + hudW - 120, hudY + 32, 11, Color{ 52, 152, 219, 255 });
+            DrawText(TextFormat("FPS: %i", curFPS), hudX + hudW - 70, hudY + 14, 12, fpsColor);
+            DrawText("60Hz Step", hudX + hudW - 70, hudY + 30, 10, Color{ 52, 152, 219, 255 });
 
-            DrawLine(hudX + 16, hudY + 52, hudX + hudW - 16, hudY + 52, Color{ 35, 48, 70, 255 });
+            DrawLine(hudX + 16, hudY + 50, hudX + hudW - 16, hudY + 50, Color{ 35, 48, 70, 255 });
 
             // Physics Subsystem Telemetry
-            DrawCircle(hudX + 22, hudY + 68, 4, Color{ 0, 220, 255, 255 });
-            DrawText("Jolt Physics v5.6: ACTIVE", hudX + 34, hudY + 62, 12, Color{ 200, 235, 255, 255 });
-            DrawText("Gravity: Martian (-3.71 m/s²)", hudX + 215, hudY + 62, 11, Color{ 160, 175, 195, 255 });
+            DrawCircle(hudX + 22, hudY + 66, 4, Color{ 0, 220, 255, 255 });
+            DrawText("Jolt Physics v5.6: ACTIVE", hudX + 34, hudY + 60, 12, Color{ 200, 235, 255, 255 });
+            DrawText("Gravity: Martian (-3.71 m/s²)", hudX + 225, hudY + 60, 11, Color{ 160, 175, 195, 255 });
 
             DrawText(TextFormat("Static Boulders: %d   |   Dynamic Spheres: %d", 
                 (int)physics.getBoulders().size(), (int)physics.getDynamicSpheres().size()), 
