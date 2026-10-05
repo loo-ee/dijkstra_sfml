@@ -19,9 +19,10 @@ DESKTOP_TARGET = $(BUILD_DIR)/dijkstra-visualizer
 
 # Native 3D Simulation Flags (Raylib 6.0+)
 RAYLIB_PREFIX ?= $(shell brew --prefix raylib 2>/dev/null || echo "/opt/homebrew")
-RAYLIB_CXXFLAGS = -std=c++17 -Wall -I"$(RAYLIB_PREFIX)/include"
+RAYLIB_CXXFLAGS = -std=c++17 -Wall -Iinclude -I"$(RAYLIB_PREFIX)/include"
 RAYLIB_LDFLAGS  = -L"$(RAYLIB_PREFIX)/lib" -lraylib \
                   -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
+ROVER_SRCS = rover_main.cpp GraphRenderer3D.cpp TerrainHeightfield.cpp RoverNavGraph.cpp
 ROVER_TARGET = $(BUILD_DIR)/rover-simulator
 
 # Emscripten WebAssembly Flags (SDL2 + SDL2_ttf WebGL backend)
@@ -33,7 +34,7 @@ EMCC_FLAGS = -s WASM=1 \
              -O3
 WASM_TARGET = $(WASM_BUILD_DIR)/index.html
 
-.PHONY: all wasm desktop run-desktop deploy clean check-raylib help
+.PHONY: all wasm desktop run-desktop rover run-rover deploy clean check-raylib help
 
 all: wasm
 
@@ -49,15 +50,25 @@ deploy: wasm
 	cp $(WASM_BUILD_DIR)/* $(TARGET_PORTFOLIO_DIR)/
 	@echo "Deployed WASM build to $(TARGET_PORTFOLIO_DIR)"
 
-# Build Native Desktop Executable
+# Build Native Desktop Executable (SFML Legacy)
 desktop: $(SRCS)
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(NATIVE_CXXFLAGS) $(SRCS) -o $(DESKTOP_TARGET) $(NATIVE_LDFLAGS)
 	@echo "Desktop build complete: $(DESKTOP_TARGET)"
 
-# Run Native Desktop Executable
+# Run Native Desktop Executable (SFML Legacy)
 run-desktop: desktop
 	./$(DESKTOP_TARGET)
+
+# Build Native 3D Simulation (Raylib)
+rover: $(ROVER_SRCS)
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) $(RAYLIB_CXXFLAGS) $(ROVER_SRCS) -o $(ROVER_TARGET) $(RAYLIB_LDFLAGS)
+	@echo "Rover 3D simulation build complete: $(ROVER_TARGET)"
+
+# Run Native 3D Simulation (Raylib)
+run-rover: rover
+	./$(ROVER_TARGET)
 
 # Clean Build Artifacts
 clean:
@@ -78,8 +89,10 @@ check-raylib:
 help:
 	@echo "Available Makefile targets:"
 	@echo "  make check-raylib - Verify Raylib installation and paths"
+	@echo "  make rover        - Build native 3D simulation binary (Raylib)"
+	@echo "  make run-rover    - Build and execute 3D rover simulation"
 	@echo "  make wasm         - Compile WebAssembly bundle to build/wasm/index.html"
 	@echo "  make deploy       - Build WASM and copy assets to portfolio frontend directory"
 	@echo "  make desktop      - Build native desktop binary (SFML legacy)"
-	@echo "  make run-desktop  - Build and execute native desktop app"
+	@echo "  make run-desktop  - Build and execute native desktop app (SFML legacy)"
 	@echo "  make clean        - Remove build artifacts"
