@@ -285,6 +285,34 @@ void DijkstraSolver3D::solveInstant(Vertex3D* start, Vertex3D* end,
             curr = curr->parent;
         }
         std::reverse(m_cachedPathNames.begin(), m_cachedPathNames.end());
+        m_pathStats.isPartial = false;
+        m_pathStats.distanceToGoal = 0.0f;
+    } else {
+        // Fallback: Best-Effort Closest Approach Standoff to Destination
+        Vertex3D* closest = nullptr;
+        float minTargetDist = std::numeric_limits<float>::infinity();
+
+        for (Vertex3D* v : m_allVertices) {
+            if (v != m_startNode && !std::isinf(v->minDistanceFromSrc) && v->parent != nullptr) {
+                float distToGoal = Vector3Distance(v->position, m_endNode->position);
+                if (distToGoal < minTargetDist) {
+                    minTargetDist = distToGoal;
+                    closest = v;
+                }
+            }
+        }
+
+        if (closest != nullptr) {
+            Vertex3D* curr = closest;
+            while (curr != nullptr) {
+                m_cachedPathNames.push_back(curr->name);
+                curr = curr->parent;
+            }
+            std::reverse(m_cachedPathNames.begin(), m_cachedPathNames.end());
+            m_pathStats.isPartial = true;
+            m_pathStats.distanceToGoal = minTargetDist;
+            m_pathStats.closestApproachNodeName = closest->name;
+        }
     }
 
     computePathStats();
@@ -405,21 +433,59 @@ void DijkstraSolver3D::solveWithHistory(Vertex3D* start, Vertex3D* end,
     }
 
     if (!pathFound) {
-        recordSnapshot("", "", "No traversable path to destination (All routes blocked or exceed friction threshold).", 0.0f, true, false);
+        // Fallback: Best-Effort Closest Approach Standoff to Destination
+        Vertex3D* closest = nullptr;
+        float minTargetDist = std::numeric_limits<float>::infinity();
+
+        for (Vertex3D* v : m_allVertices) {
+            auto it = distances.find(v->name);
+            if (v != m_startNode && it != distances.end() && !std::isinf(it->second) && !parents[v->name].empty()) {
+                float distToGoal = Vector3Distance(v->position, m_endNode->position);
+                if (distToGoal < minTargetDist) {
+                    minTargetDist = distToGoal;
+                    closest = v;
+                }
+            }
+        }
+
+        if (closest != nullptr) {
+            pathFound = true;
+            m_pathStats.isPartial = true;
+            m_pathStats.distanceToGoal = minTargetDist;
+            m_pathStats.closestApproachNodeName = closest->name;
+
+            std::string curr = closest->name;
+            while (!curr.empty()) {
+                m_cachedPathNames.push_back(curr);
+                curr = parents[curr];
+            }
+            std::reverse(m_cachedPathNames.begin(), m_cachedPathNames.end());
+
+            recordSnapshot(closest->name, "", std::string("Closest Standoff Approach (") + TextFormat("%.1fm", minTargetDist) + " from goal) Established!", 0.0f, true, true);
+        } else {
+            m_pathStats.isPartial = false;
+            m_pathStats.distanceToGoal = 0.0f;
+            m_pathStats.closestApproachNodeName = "";
+            recordSnapshot("", "", "No traversable path to destination (All routes blocked or exceed friction threshold).", 0.0f, true, false);
+        }
+    } else {
+        m_pathStats.isPartial = false;
+        m_pathStats.distanceToGoal = 0.0f;
+        m_pathStats.closestApproachNodeName = "";
+
+        // Cache resulting path
+        if (!parents[m_endNode->name].empty()) {
+            std::string curr = m_endNode->name;
+            while (!curr.empty()) {
+                m_cachedPathNames.push_back(curr);
+                curr = parents[curr];
+            }
+            std::reverse(m_cachedPathNames.begin(), m_cachedPathNames.end());
+        }
     }
 
     auto endTime = std::chrono::high_resolution_clock::now();
     float elapsedMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
-
-    // Cache resulting path
-    if (pathFound && !parents[m_endNode->name].empty()) {
-        std::string curr = m_endNode->name;
-        while (!curr.empty()) {
-            m_cachedPathNames.push_back(curr);
-            curr = parents[curr];
-        }
-        std::reverse(m_cachedPathNames.begin(), m_cachedPathNames.end());
-    }
 
     computePathStats();
     m_pathStats.computeTimeMs = elapsedMs;
@@ -431,7 +497,15 @@ void DijkstraSolver3D::solveWithHistory(Vertex3D* start, Vertex3D* end,
 }
 
 void DijkstraSolver3D::computePathStats() {
+    bool isPartial = m_pathStats.isPartial;
+    float distToGoal = m_pathStats.distanceToGoal;
+    std::string closestName = m_pathStats.closestApproachNodeName;
+
     m_pathStats = PathStats{};
+    m_pathStats.isPartial = isPartial;
+    m_pathStats.distanceToGoal = distToGoal;
+    m_pathStats.closestApproachNodeName = closestName;
+
     if (m_cachedPathNames.empty() || m_cachedPathNames.size() < 2) {
         m_pathStats.isValid = false;
         return;
@@ -468,8 +542,12 @@ void DijkstraSolver3D::computePathStats() {
     m_pathStats.elevationLoss = lossSum;
     m_pathStats.maxSlopeDeg = maxSlope;
 
-    if (m_endNode && !std::isinf(m_endNode->minDistanceFromSrc)) {
-        m_pathStats.totalEnergyCost = m_endNode->minDistanceFromSrc;
+    if (!m_cachedPathNames.empty()) {
+        std::string lastNode = m_cachedPathNames.back();
+        auto it = m_vertexMap.find(lastNode);
+        if (it != m_vertexMap.end() && it->second && !std::isinf(it->second->minDistanceFromSrc)) {
+            m_pathStats.totalEnergyCost = it->second->minDistanceFromSrc;
+        }
     }
 }
 
@@ -536,8 +614,13 @@ bool DijkstraSolver3D::isFinished() const {
 }
 
 bool DijkstraSolver3D::isPathFound() const {
-    if (m_history.empty()) return false;
-    return m_history[m_currentStepIndex].pathFound;
+    if (m_history.empty()) {
+        return !m_cachedPathNames.empty();
+    }
+    if (m_currentStepIndex < m_history.size()) {
+        return m_history[m_currentStepIndex].pathFound;
+    }
+    return false;
 }
 
 const DijkstraSnapshot3D& DijkstraSolver3D::getCurrentSnapshot() const {
@@ -549,12 +632,22 @@ const DijkstraSnapshot3D& DijkstraSolver3D::getCurrentSnapshot() const {
 
 std::vector<const Vertex3D*> DijkstraSolver3D::getShortestPathNodes() const {
     std::vector<const Vertex3D*> nodes;
-    if (m_history.empty()) return nodes;
+    if (m_history.empty()) {
+        for (const auto& name : m_cachedPathNames) {
+            auto it = m_vertexMap.find(name);
+            if (it != m_vertexMap.end()) {
+                nodes.push_back(it->second);
+            }
+        }
+        return nodes;
+    }
 
     const auto& snap = m_history[m_currentStepIndex];
-    if (!snap.pathFound || !m_endNode) return nodes;
+    if (!snap.pathFound) return nodes;
 
-    std::string curr = m_endNode->name;
+    std::string curr = (m_pathStats.isPartial && !m_pathStats.closestApproachNodeName.empty())
+                       ? m_pathStats.closestApproachNodeName
+                       : (m_endNode ? m_endNode->name : "");
     while (!curr.empty()) {
         auto it = m_vertexMap.find(curr);
         if (it != m_vertexMap.end()) {

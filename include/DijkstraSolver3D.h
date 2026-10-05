@@ -43,6 +43,9 @@ struct PathStats {
     int waypointCount = 0;
     float computeTimeMs = 0.0f;
     bool isValid = false;
+    bool isPartial = false;
+    float distanceToGoal = 0.0f;
+    std::string closestApproachNodeName = "";
 };
 
 class DijkstraSolver3D {
@@ -94,6 +97,8 @@ public:
     // Result Path & Telemetry
     std::vector<const Vertex3D*> getShortestPathNodes() const;
     const PathStats& getPathStats() const { return m_pathStats; }
+    bool isPartialPath() const { return m_pathStats.isPartial; }
+    float getDistanceToGoal() const { return m_pathStats.distanceToGoal; }
     bool isNeuralMode() const { return m_isNeuralMode; }
 
 private:

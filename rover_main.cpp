@@ -602,6 +602,22 @@ int main() {
             // F. Phase 4: Draw Brilliant Glowing Emerald Shortest Path along Terrain Surface
             GraphRenderer3D::drawShortestPath(dijkstra.getShortestPathNodes(), sceneTime);
 
+            // Standoff Vantage Conduit: If goal is physically blocked, draw laser line-of-sight from standoff node to goal
+            if (dijkstra.isPartialPath() && navGraph.getEndNode()) {
+                const auto& pathNodes = dijkstra.getShortestPathNodes();
+                if (!pathNodes.empty()) {
+                    Vector3 standoffPos = pathNodes.back()->position;
+                    Vector3 goalPos = navGraph.getEndNode()->position;
+                    float pulse = 0.5f + 0.5f * sinf(sceneTime * 6.0f);
+                    Color standoffCol = ColorAlpha(Color{ 255, 175, 45, 255 }, 0.55f + 0.45f * pulse);
+                    
+                    // Standoff targeting beam and rings
+                    DrawLine3D(standoffPos, goalPos, standoffCol);
+                    DrawSphereWires(standoffPos, 1.6f + 0.4f * pulse, 6, 6, standoffCol);
+                    DrawCircle3D(standoffPos, 3.0f, Vector3{ 0, 1, 0 }, 90.0f, standoffCol);
+                }
+            }
+
             // G. Draw Draped NavGraph Nodes (Prominent Glowing 3D Spheres with Distance LOD)
             if (showNodes) {
                 Vector3 camPos = activeCamera.position;
@@ -770,8 +786,13 @@ int main() {
                 DrawText(TextFormat("STATUS: [REPLAYING STEP %zu / %zu (%.0f%%)]", stepIdx + 1, totalSteps, pct), 
                     hudX + 16, hudY + 150, 12, GOLD);
             } else if (dijkstra.isPathFound()) {
-                DrawText(TextFormat("STATUS: [OPTIMAL ROUTE SOLVED in %.2f ms]", stats.computeTimeMs), 
-                    hudX + 16, hudY + 150, 12, Color{ 46, 204, 113, 255 });
+                if (dijkstra.isPartialPath()) {
+                    DrawText(TextFormat("STATUS: [STANDOFF VANTAGE - %.1fm FROM BLOCKED GOAL]", stats.distanceToGoal), 
+                        hudX + 16, hudY + 150, 12, Color{ 255, 175, 45, 255 });
+                } else {
+                    DrawText(TextFormat("STATUS: [OPTIMAL ROUTE SOLVED in %.2f ms]", stats.computeTimeMs), 
+                        hudX + 16, hudY + 150, 12, Color{ 46, 204, 113, 255 });
+                }
             } else {
                 DrawText("STATUS: [NO TRAVERSABLE PATH - SLIP / BOULDER BLOCKED]", 
                     hudX + 16, hudY + 150, 12, Color{ 255, 95, 95, 255 });
@@ -779,8 +800,13 @@ int main() {
 
             // Row 5: Route Metrics
             if (stats.isValid) {
-                DrawText(TextFormat("3D Distance: %.1f m   |   Physical Energy: %.1f J-equiv", 
-                    stats.totalDistance, stats.totalEnergyCost), hudX + 16, hudY + 172, 11, RAYWHITE);
+                if (stats.isPartial) {
+                    DrawText(TextFormat("Safe Standoff: %.1fm  |  Standoff Gap: %.1fm to target", 
+                        stats.totalDistance, stats.distanceToGoal), hudX + 16, hudY + 172, 11, Color{ 255, 215, 100, 255 });
+                } else {
+                    DrawText(TextFormat("3D Distance: %.1f m   |   Physical Energy: %.1f J-equiv", 
+                        stats.totalDistance, stats.totalEnergyCost), hudX + 16, hudY + 172, 11, RAYWHITE);
+                }
                 DrawText(TextFormat("Waypoints: %d nodes    |   Max Route Slope: %.1f°", 
                     stats.waypointCount, stats.maxSlopeDeg), hudX + 16, hudY + 190, 11, RAYWHITE);
                 DrawText(TextFormat("Elevation Profile: +%.1fm climb  /  -%.1fm descent", 

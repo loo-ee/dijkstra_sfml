@@ -451,6 +451,12 @@ bool RoverNavGraph::blockEdgeBetweenPositions(Vector3 posA, Vector3 posB) {
 void RoverNavGraph::setStartNode(Vertex3D* node) {
     if (!node) return;
 
+    // If selected start node is impassable (hazard/boulder/cliff), snap to nearest walkable node
+    if (!node->isWalkable) {
+        Vertex3D* walkable = getClosestWalkableNode(node->position);
+        if (walkable) node = walkable;
+    }
+
     if (m_startNode && m_startNode != m_endNode) {
         m_startNode->state = m_startNode->isWalkable ? NodeState::DEFAULT : NodeState::IMPASSABLE;
     }
