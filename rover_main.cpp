@@ -1,5 +1,6 @@
 #include <raylib.h>
 #include <raymath.h>
+#include <rlgl.h>
 #include <vector>
 #include <string>
 #include <memory>
@@ -11,6 +12,25 @@
 #include "TerrainHeightfield.h"
 #include "RoverNavGraph.h"
 #include "PhysicsWorld.h"
+
+// Helper: Render a modern, high-contrast keybinding badge pill with text
+static void DrawKeyBind(int x, int y, const char* key, const char* label, bool active = true) {
+    int keyW = MeasureText(key, 11);
+    int padX = 5;
+    int h = 18;
+    Rectangle badgeRect = { (float)x, (float)y, (float)(keyW + padX * 2), (float)h };
+    Color badgeBg = active ? Color{ 26, 36, 52, 255 } : Color{ 18, 22, 30, 180 };
+    Color badgeBorder = active ? Color{ 70, 110, 165, 255 } : Color{ 40, 50, 68, 200 };
+    Color keyColor = active ? Color{ 225, 238, 255, 255 } : Color{ 110, 120, 135, 255 };
+    Color labelColor = active ? Color{ 210, 220, 230, 255 } : Color{ 110, 120, 130, 255 };
+
+    DrawRectangleRounded(badgeRect, 0.35f, 4, badgeBg);
+    DrawRectangleRoundedLines(badgeRect, 0.35f, 4, badgeBorder);
+    DrawText(key, x + padX, y + 4, 11, keyColor);
+
+    int labelX = x + keyW + padX * 2 + 6;
+    DrawText(label, labelX, y + 4, 11, labelColor);
+}
 
 int main() {
     // 1. High-DPI Window Initialization (Native Retina resolution on Apple Silicon)
@@ -103,6 +123,7 @@ int main() {
     bool showNodes = true;
     bool showBoulders = true;
     bool showWireframe = false;
+    bool showHUD = true;
 
     // Distant Martian pale blue sun position
     Vector3 sunPosition = { 160.0f, 110.0f, -130.0f };
@@ -169,6 +190,7 @@ int main() {
         if (IsKeyPressed(KEY_N)) showNodes = !showNodes;
         if (IsKeyPressed(KEY_O)) showBoulders = !showBoulders;
         if (IsKeyPressed(KEY_W)) showWireframe = !showWireframe;
+        if (IsKeyPressed(KEY_H)) showHUD = !showHUD;
 
         // Render Frame
         BeginDrawing();
@@ -188,7 +210,9 @@ int main() {
 
             // B. Draw Procedural Martian Terrain Mesh with High-Definition Surface Texture
             if (showTerrain && terrain.isLoaded()) {
+                rlDisableBackfaceCulling();
                 DrawModel(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, WHITE);
+                rlEnableBackfaceCulling();
 
                 if (showWireframe) {
                     DrawModelWires(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, ColorAlpha(BLACK, 0.2f));
@@ -256,59 +280,172 @@ int main() {
         }
         EndMode3D();
 
-        // 2D HUD & Telemetry Overlay (Sleek Glassmorphic Styling)
-        DrawRectangle(16, 16, 450, 340, ColorAlpha(Color{ 10, 14, 22, 255 }, 0.90f));
-        DrawRectangleLines(16, 16, 450, 340, Color{ 60, 80, 115, 255 });
+        // 2D HUD & Mission Control Overlay
+        if (showHUD) {
+            int screenW = GetScreenWidth();
+            int screenH = GetScreenHeight();
 
-        DrawText("Phase 3: Jolt Physics & Terrain Collision", 28, 26, 18, RAYWHITE);
-        DrawText(TextFormat("FPS: %i (Target: 60) | Step: 60Hz", GetFPS()), 28, 52, 14, GREEN);
+            // ----------------------------------------------------
+            // 1. TOP-LEFT: Mission Status & Telemetry HUD Card
+            // ----------------------------------------------------
+            int hudX = 16;
+            int hudY = 16;
+            int hudW = 400;
+            int hudH = 265;
+            Rectangle hudRect = { (float)hudX, (float)hudY, (float)hudW, (float)hudH };
+            DrawRectangleRounded(hudRect, 0.04f, 4, ColorAlpha(Color{ 10, 14, 24, 255 }, 0.92f));
+            DrawRectangleRoundedLines(hudRect, 0.04f, 4, Color{ 48, 68, 98, 255 });
+            DrawRectangle(hudX + 1, hudY + 1, hudW - 2, 3, Color{ 230, 95, 45, 255 }); // Martian Ochre accent
 
-        // Physics Telemetry
-        DrawText("Jolt Physics: ACTIVE | Gravity: Martian (g = -3.71 m/s^2)", 28, 72, 13, SKYBLUE);
-        DrawText(TextFormat("Static Boulders: %d | Dynamic Spheres: %d", 
-            (int)physics.getBoulders().size(), (int)physics.getDynamicSpheres().size()), 28, 90, 13, RAYWHITE);
+            DrawText("MARTIAN ROVER MISSION TELEMETRY", hudX + 16, hudY + 14, 14, RAYWHITE);
+            DrawText("Phase 3: Jolt Physics & NavMesh", hudX + 16, hudY + 32, 11, Color{ 145, 175, 205, 255 });
 
-        DrawText(TextFormat("NavGraph: %d Nodes | %d Edges (%d CUT by Raycast)",
-            (int)navGraph.getVertices().size(), 
-            (int)navGraph.getEdges().size(), 
-            blockedEdgeCount), 28, 108, 13, (blockedEdgeCount > 0) ? Color{ 255, 110, 110, 255 } : LIGHTGRAY);
+            // FPS & Physics Sub-step Badges
+            int curFPS = GetFPS();
+            Color fpsColor = (curFPS >= 55) ? Color{ 46, 204, 113, 255 } : Color{ 241, 196, 15, 255 };
+            DrawText(TextFormat("FPS: %i", curFPS), hudX + hudW - 120, hudY + 14, 13, fpsColor);
+            DrawText("Step: 60Hz", hudX + hudW - 120, hudY + 32, 11, Color{ 52, 152, 219, 255 });
 
-        // Picking Telemetry
-        DrawText("Interactive 3D Picking:", 28, 132, 13, RAYWHITE);
-        DrawCircle(38, 154, 6, GraphRenderer3D::getNodeColor(NodeState::START));
-        std::string startInfo = navGraph.getStartNode() 
-            ? TextFormat("Start: %s (y=%.1fm, slope=%.1f deg)", 
-                navGraph.getStartNode()->name.c_str(), 
-                navGraph.getStartNode()->position.y,
-                navGraph.getStartNode()->slopeAngleRad * RAD2DEG)
-            : "Start: None";
-        DrawText(startInfo.c_str(), 52, 148, 12, RAYWHITE);
+            DrawLine(hudX + 16, hudY + 52, hudX + hudW - 16, hudY + 52, Color{ 35, 48, 70, 255 });
 
-        DrawCircle(38, 174, 6, GraphRenderer3D::getNodeColor(NodeState::END));
-        std::string endInfo = navGraph.getEndNode() 
-            ? TextFormat("End:   %s (y=%.1fm, slope=%.1f deg)", 
-                navGraph.getEndNode()->name.c_str(), 
-                navGraph.getEndNode()->position.y,
-                navGraph.getEndNode()->slopeAngleRad * RAD2DEG)
-            : "End: None";
-        DrawText(endInfo.c_str(), 52, 168, 12, RAYWHITE);
+            // Physics Subsystem Telemetry
+            DrawCircle(hudX + 22, hudY + 68, 4, Color{ 0, 220, 255, 255 });
+            DrawText("Jolt Physics v5.6: ACTIVE", hudX + 34, hudY + 62, 12, Color{ 200, 235, 255, 255 });
+            DrawText("Gravity: Martian (-3.71 m/s²)", hudX + 215, hudY + 62, 11, Color{ 160, 175, 195, 255 });
 
-        // Edge Legend
-        DrawText("NavGraph Edge Status:", 28, 194, 13, RAYWHITE);
-        DrawRectangle(32, 212, 14, 8, Color{ 140, 175, 215, 255 });
-        DrawText("Clear Line of Sight", 52, 209, 12, RAYWHITE);
+            DrawText(TextFormat("Static Boulders: %d   |   Dynamic Spheres: %d", 
+                (int)physics.getBoulders().size(), (int)physics.getDynamicSpheres().size()), 
+                hudX + 34, hudY + 80, 11, RAYWHITE);
 
-        DrawRectangle(212, 212, 14, 8, Color{ 240, 45, 45, 255 });
-        DrawText("Blocked (Boulder Cut)", 232, 209, 12, Color{ 255, 120, 120, 255 });
+            // NavGraph Telemetry & Boulder Cutting Status
+            DrawText(TextFormat("NavGraph: %d Nodes   |   %d Mesh Edges", 
+                (int)navGraph.getVertices().size(), (int)navGraph.getEdges().size()),
+                hudX + 34, hudY + 98, 11, RAYWHITE);
 
-        // Physics Action Keys
-        DrawText("Physics Actions:", 28, 234, 13, GOLD);
-        DrawText("[B] Drop Sphere at Hovered Node | [SPACE] Cascade Crater Spheres", 28, 252, 12, RAYWHITE);
-        DrawText("[C] Clear Dynamic Spheres | [O] Toggle Boulders", 28, 270, 12, RAYWHITE);
+            if (blockedEdgeCount > 0) {
+                DrawText(TextFormat("Raycast Occlusion: %d Edges Blocked by Boulders", blockedEdgeCount),
+                    hudX + 34, hudY + 116, 11, Color{ 255, 110, 110, 255 });
+            } else {
+                DrawText("Raycast Occlusion: All Edges Clear", hudX + 34, hudY + 116, 11, Color{ 46, 204, 113, 255 });
+            }
 
-        // General Controls
-        DrawText("Picking: [Left Click] Start | [Shift + Left Click] End", 28, 294, 11, LIGHTGRAY);
-        DrawText("Camera:  [RMB Drag] Orbit | [MMB Drag] Pan | [Wheel] Zoom | [R] Reset", 28, 312, 11, GRAY);
+            DrawLine(hudX + 16, hudY + 138, hudX + hudW - 16, hudY + 138, Color{ 35, 48, 70, 255 });
+
+            // Waypoints & Interactive Picking Telemetry
+            DrawText("WAYPOINT ROUTE STATUS", hudX + 16, hudY + 148, 11, Color{ 145, 175, 205, 255 });
+
+            // Start Node
+            DrawCircle(hudX + 22, hudY + 172, 5, GraphRenderer3D::getNodeColor(NodeState::START));
+            std::string startInfo = navGraph.getStartNode() 
+                ? TextFormat("Start: %s  (y=%.1fm, slope=%.1f°)", 
+                    navGraph.getStartNode()->name.c_str(), 
+                    navGraph.getStartNode()->position.y,
+                    navGraph.getStartNode()->slopeAngleRad * RAD2DEG)
+                : "Start: None [Left Click node to set]";
+            DrawText(startInfo.c_str(), hudX + 34, hudY + 166, 11, RAYWHITE);
+
+            // End Node
+            DrawCircle(hudX + 22, hudY + 194, 5, GraphRenderer3D::getNodeColor(NodeState::END));
+            std::string endInfo = navGraph.getEndNode() 
+                ? TextFormat("End:   %s  (y=%.1fm, slope=%.1f°)", 
+                    navGraph.getEndNode()->name.c_str(), 
+                    navGraph.getEndNode()->position.y,
+                    navGraph.getEndNode()->slopeAngleRad * RAD2DEG)
+                : "End:   None [Shift + Left Click node to set]";
+            DrawText(endInfo.c_str(), hudX + 34, hudY + 188, 11, RAYWHITE);
+
+            // Hovered Inspector Node
+            DrawCircleLines(hudX + 22, hudY + 216, 5, GOLD);
+            std::string hoverInfo = hoveredNode
+                ? TextFormat("Hover: %s  (y=%.1fm, slope=%.1f°)", 
+                    hoveredNode->name.c_str(),
+                    hoveredNode->position.y,
+                    hoveredNode->slopeAngleRad * RAD2DEG)
+                : "Hover: [Aim cursor over any 3D node]";
+            DrawText(hoverInfo.c_str(), hudX + 34, hudY + 210, 11, hoveredNode ? GOLD : Color{ 130, 140, 155, 255 });
+
+            // ----------------------------------------------------
+            // 2. TOP-RIGHT: NavGraph Legend Card
+            // ----------------------------------------------------
+            int legW = 250;
+            int legH = 148;
+            int legX = screenW - legW - 16;
+            int legY = 16;
+            Rectangle legRect = { (float)legX, (float)legY, (float)legW, (float)legH };
+            DrawRectangleRounded(legRect, 0.05f, 4, ColorAlpha(Color{ 10, 14, 24, 255 }, 0.92f));
+            DrawRectangleRoundedLines(legRect, 0.05f, 4, Color{ 48, 68, 98, 255 });
+            DrawRectangle(legX + 1, legY + 1, legW - 2, 3, Color{ 52, 152, 219, 255 }); // Cyan accent
+
+            DrawText("NAVGRAPH LEGEND", legX + 16, legY + 14, 12, RAYWHITE);
+            DrawLine(legX + 16, legY + 32, legX + legW - 16, legY + 32, Color{ 35, 48, 70, 255 });
+
+            // Legend Items
+            DrawRectangle(legX + 16, legY + 44, 16, 4, Color{ 140, 175, 215, 255 });
+            DrawText("Clear Traversable Edge", legX + 40, legY + 40, 11, RAYWHITE);
+
+            DrawRectangle(legX + 16, legY + 66, 16, 4, Color{ 240, 45, 45, 255 });
+            DrawText("Blocked (Boulder Cut)", legX + 40, legY + 62, 11, Color{ 255, 120, 120, 255 });
+
+            DrawCircle(legX + 24, legY + 88, 5, GraphRenderer3D::getNodeColor(NodeState::START));
+            DrawText("Start Mission Origin", legX + 40, legY + 84, 11, RAYWHITE);
+
+            DrawCircle(legX + 24, legY + 108, 5, GraphRenderer3D::getNodeColor(NodeState::END));
+            DrawText("Target Destination Node", legX + 40, legY + 104, 11, RAYWHITE);
+
+            DrawCircleLines(legX + 24, legY + 128, 5, GOLD);
+            DrawText("Target Hover Inspector", legX + 40, legY + 124, 11, GOLD);
+
+            // ----------------------------------------------------
+            // 3. BOTTOM COMMAND DECK & KEYBINDINGS BAR
+            // ----------------------------------------------------
+            int deckH = 88;
+            int deckW = screenW - 32;
+            int deckX = 16;
+            int deckY = screenH - deckH - 16;
+            Rectangle deckRect = { (float)deckX, (float)deckY, (float)deckW, (float)deckH };
+            DrawRectangleRounded(deckRect, 0.04f, 4, ColorAlpha(Color{ 10, 14, 24, 255 }, 0.94f));
+            DrawRectangleRoundedLines(deckRect, 0.04f, 4, Color{ 48, 68, 98, 255 });
+            DrawRectangle(deckX + 1, deckY + 1, deckW - 2, 2, Color{ 70, 115, 175, 255 }); // Slate blue accent
+
+            float colW = (deckW - 32.0f) / 4.0f;
+
+            // --- Column 1: Camera Controls ---
+            int c1X = deckX + 16;
+            DrawText("CAMERA NAVIGATION", c1X, deckY + 10, 10, Color{ 100, 185, 255, 255 });
+            DrawKeyBind(c1X, deckY + 28, "RMB Drag", "Orbit View");
+            DrawKeyBind(c1X + 130, deckY + 28, "Wheel", "Zoom");
+            DrawKeyBind(c1X, deckY + 54, "MMB / Shift+RMB", "Pan");
+            DrawKeyBind(c1X + 175, deckY + 54, "R", "Reset");
+
+            // --- Column 2: Waypoint Selection ---
+            int c2X = deckX + 16 + (int)colW;
+            DrawLine(c2X - 12, deckY + 10, c2X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
+            DrawText("WAYPOINT PICKING", c2X, deckY + 10, 10, Color{ 46, 204, 113, 255 });
+            DrawKeyBind(c2X, deckY + 28, "Left Click", "Set Start Origin Node");
+            DrawKeyBind(c2X, deckY + 54, "Shift + Left Click", "Set Destination Node");
+
+            // --- Column 3: Physics Engine Actions ---
+            int c3X = deckX + 16 + (int)(colW * 2);
+            DrawLine(c3X - 12, deckY + 10, c3X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
+            DrawText("PHYSICS ACTIONS", c3X, deckY + 10, 10, Color{ 241, 196, 15, 255 });
+            DrawKeyBind(c3X, deckY + 28, "B", "Drop Sphere");
+            DrawKeyBind(c3X + 120, deckY + 28, "C", "Clear Dynamic");
+            DrawKeyBind(c3X, deckY + 54, "SPACE", "Crater Avalanche Cascade");
+
+            // --- Column 4: Display & Visual Toggles ---
+            int c4X = deckX + 16 + (int)(colW * 3);
+            DrawLine(c4X - 12, deckY + 10, c4X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
+            DrawText("VIEW & HUD TOGGLES", c4X, deckY + 10, 10, Color{ 190, 160, 240, 255 });
+            DrawKeyBind(c4X, deckY + 28, "T", "Terrain", showTerrain);
+            DrawKeyBind(c4X + 85, deckY + 28, "E", "Edges", showEdges);
+            DrawKeyBind(c4X + 165, deckY + 28, "N", "Nodes", showNodes);
+            DrawKeyBind(c4X, deckY + 54, "O", "Boulders", showBoulders);
+            DrawKeyBind(c4X + 85, deckY + 54, "W", "Wire", showWireframe);
+            DrawKeyBind(c4X + 165, deckY + 54, "H", "HUD", showHUD);
+        } else {
+            // Minimalist badge when HUD is hidden
+            DrawKeyBind(GetScreenWidth() - 140, GetScreenHeight() - 32, "H", "Show HUD", true);
+        }
 
         EndDrawing();
     }

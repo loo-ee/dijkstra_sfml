@@ -227,10 +227,10 @@ void TerrainHeightfield::generate() {
             mesh.indices[tIdx++] = bottomLeft;
             mesh.indices[tIdx++] = topRight;
 
-            // Triangle 2
-            mesh.indices[tIdx++] = topRight;
+            // Triangle 2 (CCW normal pointing upward)
             mesh.indices[tIdx++] = bottomLeft;
             mesh.indices[tIdx++] = bottomRight;
+            mesh.indices[tIdx++] = topRight;
         }
     }
 

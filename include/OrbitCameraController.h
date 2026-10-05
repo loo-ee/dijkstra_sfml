@@ -64,15 +64,21 @@ public:
                 yaw -= mouseDelta.x * rotSpeed;
                 pitch -= mouseDelta.y * rotSpeed;
 
-                // Clamp pitch to avoid gimbal lock / pole flips
-                const float pitchLimit = 89.0f * DEG2RAD;
-                pitch = Clamp(pitch, -pitchLimit, pitchLimit);
+                // Clamp pitch between ~2.5 deg and ~88 deg so camera stays above terrain plane
+                const float minPitch = 0.045f;           // ~2.5 degrees above horizontal plane
+                const float maxPitch = 88.0f * DEG2RAD;  // ~88 degrees overhead
+                pitch = Clamp(pitch, minPitch, maxPitch);
 
                 m_camera.position = Vector3Add(m_camera.target, Vector3{
                     radius * cosf(pitch) * sinf(yaw),
                     radius * sinf(pitch),
                     radius * cosf(pitch) * cosf(yaw)
                 });
+
+                // Extra safety: enforce camera Y is always above target Y
+                if (m_camera.position.y < m_camera.target.y + 1.0f) {
+                    m_camera.position.y = m_camera.target.y + 1.0f;
+                }
             }
         }
     }
@@ -80,7 +86,7 @@ public:
     Camera3D& getCamera() { return m_camera; }
     const Camera3D& getCamera() const { return m_camera; }
 
-    void reset(Vector3 position = { 0.0f, 30.0f, 40.0f }, Vector3 target = { 0.0f, 0.0f, 0.0f }) {
+    void reset(Vector3 position = { 0.0f, 65.0f, 100.0f }, Vector3 target = { 0.0f, 0.0f, 0.0f }) {
         m_camera.position = position;
         m_camera.target = target;
         m_camera.up = Vector3{ 0.0f, 1.0f, 0.0f };
