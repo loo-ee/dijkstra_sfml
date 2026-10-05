@@ -33,6 +33,11 @@ PlanetaryRover::PlanetaryRover()
     , m_steerInput(0.0f)
     , m_brakeInput(0.0f)
     , m_tcsEngagedOverall(false)
+    , m_hdcActive(false)
+    , m_espActive(false)
+    , m_unstuckActive(false)
+    , m_stuckTimer(0.0f)
+    , m_unstuckTimer(0.0f)
     , m_currentWaypointIndex(0)
     , m_targetWaypoint{ 0, 0, 0 }
     , m_lookaheadDist(4.0f)
@@ -100,6 +105,11 @@ void PlanetaryRover::reset(PhysicsWorld& physics, Vector3 spawnPos, float yawAng
     m_steerInput    = 0.0f;
     m_brakeInput    = 0.0f;
     m_tcsEngagedOverall = false;
+    m_hdcActive     = false;
+    m_espActive     = false;
+    m_unstuckActive = false;
+    m_stuckTimer    = 0.0f;
+    m_unstuckTimer  = 0.0f;
     m_hasReachedGoal = false;
     m_currentWaypointIndex = 0;
 
@@ -284,7 +294,7 @@ void PlanetaryRover::updatePurePursuit(float dt) {
     float steerRate = 3.5f;
     m_steerInput += Clamp(targetSteer - m_steerInput, -steerRate * dt, steerRate * dt);
 
-    // 4. Target speed regulation & Incline assist
+    // 4. Target speed regulation, Downhill Hill Descent Control (HDC), & Incline Assist
     float cruiseSpeed = 4.2f; // ~15.1 km/h cruise
 
     // Turn slowdown: modulate speed inversely with steer magnitude
@@ -296,20 +306,59 @@ void PlanetaryRover::updatePurePursuit(float dt) {
         cruiseSpeed *= fmaxf(0.2f, distToGoal / 7.0f);
     }
 
+    // Downhill Speed Governor & Slope Adaptation:
+    // When pitching down (descending a crater or scree slope), reduce target speed
+    m_hdcActive = false;
+    if (m_pitchDeg < -2.0f) {
+        float descentAngle = -m_pitchDeg;
+        // On a steep 25 deg descent, cruise speed automatically drops to ~1.8 m/s
+        float descentFactor = Clamp(1.0f - (descentAngle / 28.0f) * 0.58f, 0.40f, 1.0f);
+        cruiseSpeed *= descentFactor;
+    }
+
     // Incline Assist: if climbing uphill, boost torque to overcome gravity
     float inclineFactor = 1.0f;
     if (m_pitchDeg > 2.0f) {
         inclineFactor += 1.8f * fminf(1.0f, sinf(m_pitchDeg * DEG2RAD));
     }
 
-    // Speed error control
+    // Speed error control with Active Hill Descent Control (HDC)
     float speedError = cruiseSpeed - m_speed;
     if (speedError > 0.0f) {
         m_throttleInput = Clamp(speedError * 0.45f * inclineFactor, 0.20f, 1.0f);
         m_brakeInput = 0.0f;
     } else {
         m_throttleInput = 0.0f;
-        m_brakeInput = Clamp(-speedError * 0.5f, 0.0f, 0.8f);
+        // Strong active braking if descending or overspeeding down slope
+        float brakeGain = (m_pitchDeg < -2.0f) ? 0.95f : 0.65f;
+        float downhillExtra = (m_pitchDeg < -2.0f) ? (-m_pitchDeg * 0.025f) : 0.0f;
+        m_brakeInput = Clamp(-speedError * brakeGain + downhillExtra, 0.0f, 1.0f);
+        if (m_pitchDeg < -2.5f || m_speed > 4.5f) {
+            m_hdcActive = true;
+        }
+    }
+
+    // Anti-Stuck Detection & Autonomous Recovery Routine
+    if (m_throttleInput > 0.25f && fabsf(m_speed) < 0.18f && !m_hasReachedGoal) {
+        m_stuckTimer += dt;
+        if (m_stuckTimer > 1.2f) {
+            m_unstuckActive = true;
+            m_unstuckTimer += dt;
+            // Wiggle steering left and right to gain traction on rocks
+            float wiggle = sinf(m_unstuckTimer * 9.0f) * 0.48f;
+            m_steerInput = Clamp(m_steerInput + wiggle, -0.62f, 0.62f);
+            m_throttleInput = 1.0f; // Maximum torque burst
+            m_brakeInput = 0.0f;
+            if (m_unstuckTimer > 2.5f) {
+                m_stuckTimer = 0.0f;
+                m_unstuckTimer = 0.0f;
+                m_unstuckActive = false;
+            }
+        }
+    } else if (fabsf(m_speed) > 0.35f) {
+        m_stuckTimer = 0.0f;
+        m_unstuckTimer = 0.0f;
+        m_unstuckActive = false;
     }
 }
 
@@ -447,9 +496,52 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
     physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, -arbForceR), m_wheels[2].worldMountPos);
     physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, +arbForceR), m_wheels[3].worldMountPos);
 
+    // Step 3: Active Electronic Stability Program (ESP) & Dynamic Gyroscopic Leveling
+    m_espActive = false;
+    Vector3 worldUp = Vector3{ 0.0f, 1.0f, 0.0f };
+    Vector3 tiltCross = Vector3CrossProduct(m_up, worldUp);
+    float tiltCrossLen = Vector3Length(tiltCross);
+
+    // If tilted (> 6 deg) or under high roll/pitch oscillation:
+    if (tiltCrossLen > 0.10f) {
+        Vector3 tiltAxis = Vector3Normalize(tiltCross);
+        // Corrective stabilizing torque directly counteracting tipping
+        float stabTorqueMag = m_mass * 18.0f * tiltCrossLen;
+        physics.applyTorque(m_chassisBodyId, Vector3Scale(tiltAxis, stabTorqueMag));
+        m_espActive = true;
+    }
+
+    // Step 4: Automatic Inverted Recovery / Self-Righting Assist
+    // If the rover has rolled past 65 deg (or inverted on its back), smoothly right it
+    if (m_up.y < 0.25f) {
+        Vector3 rightingTorque = Vector3CrossProduct(m_up, worldUp);
+        physics.applyTorque(m_chassisBodyId, Vector3Scale(Vector3Normalize(rightingTorque), m_mass * 40.0f));
+        physics.applyForceAtPosition(m_chassisBodyId, Vector3{ 0.0f, m_mass * 16.0f, 0.0f }, m_position);
+        m_espActive = true;
+    }
+
+    // Step 5: Manual Mode Overspeed Governor (Intervenes if speed is unsafe down slope)
+    if (!m_isAutonomous) {
+        if (m_speed > 5.5f || (m_pitchDeg < -6.0f && m_speed > 3.8f)) {
+            m_hdcActive = true;
+            m_brakeInput = fmaxf(m_brakeInput, 0.85f);
+        }
+    }
+
     // Energy tracking
     m_currentPowerWatts = totalWorkRate;
     m_batteryJoules += totalWorkRate * dt;
+}
+
+void PlanetaryRover::selfRight(PhysicsWorld& physics) {
+    if (m_chassisBodyId.IsInvalid()) return;
+    Vector3 currentPos = m_position;
+    currentPos.y += 1.2f;
+    float currentYaw = m_yawDeg * DEG2RAD;
+    Quaternion uprightRot = QuaternionFromAxisAngle(Vector3{ 0, 1, 0 }, currentYaw);
+    physics.setBodyTransform(m_chassisBodyId, currentPos, uprightRot);
+    physics.setBodyLinearVelocity(m_chassisBodyId, Vector3{ 0, 0, 0 });
+    physics.setBodyAngularVelocity(m_chassisBodyId, Vector3{ 0, 0, 0 });
 }
 
 void PlanetaryRover::render(float sceneTime) const {

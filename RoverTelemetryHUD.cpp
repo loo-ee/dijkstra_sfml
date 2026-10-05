@@ -260,15 +260,48 @@ void RoverTelemetryHUD::drawEnergyBar(int x, int y, int width, int height, float
 void RoverTelemetryHUD::drawSlipMonitor(int x, int y, int width, int height, const PlanetaryRover& rover) {
     DrawText("TRACTION CONTROL & TIRE SLIP", x, y, 10, Color{ 100, 190, 255, 255 });
 
-    // TCS Indicator Badge
+    // Active Safety Badges: ESP (Stability), HDC (Descent Brake), TCS (Traction)
+    int badgeRight = x + width;
+
+    // 1. ESP Badge (Electronic Stability Program / Anti-Rollover)
+    if (rover.isESPActive()) {
+        int espW = 48;
+        Rectangle espRect = { (float)(badgeRight - espW), (float)y - 2, (float)espW, 16.0f };
+        DrawRectangleRounded(espRect, 0.3f, 4, Color{ 60, 20, 75, 255 });
+        DrawRectangleRoundedLines(espRect, 0.3f, 4, Color{ 210, 110, 255, 255 });
+        DrawText("ESP ACT", badgeRight - espW + 6, y + 1, 9, Color{ 235, 150, 255, 255 });
+        badgeRight -= (espW + 4);
+    }
+
+    // 2. HDC Badge (Hill Descent Control / Downhill Brake)
+    if (rover.isHDCActive()) {
+        int hdcW = 54;
+        Rectangle hdcRect = { (float)(badgeRight - hdcW), (float)y - 2, (float)hdcW, 16.0f };
+        DrawRectangleRounded(hdcRect, 0.3f, 4, Color{ 75, 25, 20, 255 });
+        DrawRectangleRoundedLines(hdcRect, 0.3f, 4, Color{ 255, 90, 80, 255 });
+        DrawText("HDC BRK", badgeRight - hdcW + 6, y + 1, 9, Color{ 255, 120, 100, 255 });
+        badgeRight -= (hdcW + 4);
+    }
+
+    // 3. Unstuck routine badge
+    if (rover.isUnstuckActive()) {
+        int ustW = 58;
+        Rectangle ustRect = { (float)(badgeRight - ustW), (float)y - 2, (float)ustW, 16.0f };
+        DrawRectangleRounded(ustRect, 0.3f, 4, Color{ 20, 50, 70, 255 });
+        DrawRectangleRoundedLines(ustRect, 0.3f, 4, Color{ 80, 200, 255, 255 });
+        DrawText("UNSTUCK", badgeRight - ustW + 6, y + 1, 9, Color{ 100, 220, 255, 255 });
+        badgeRight -= (ustW + 4);
+    }
+
+    // 4. TCS Indicator Badge
     if (rover.isTCSActive()) {
-        int tcsW = 82;
-        Rectangle tcsRect = { (float)(x + width - tcsW), (float)y - 2, (float)tcsW, 16.0f };
+        int tcsW = 58;
+        Rectangle tcsRect = { (float)(badgeRight - tcsW), (float)y - 2, (float)tcsW, 16.0f };
         DrawRectangleRounded(tcsRect, 0.3f, 4, Color{ 80, 45, 10, 255 });
         DrawRectangleRoundedLines(tcsRect, 0.3f, 4, Color{ 255, 165, 0, 255 });
-        DrawText("TCS ACTIVE", x + width - tcsW + 8, y + 1, 9, Color{ 255, 195, 50, 255 });
+        DrawText("TCS ACT", badgeRight - tcsW + 8, y + 1, 9, Color{ 255, 195, 50, 255 });
     } else {
-        DrawText("TCS READY", x + width - 60, y + 1, 9, Color{ 100, 120, 140, 255 });
+        DrawText("TCS RDY", badgeRight - 48, y + 1, 9, Color{ 100, 120, 140, 255 });
     }
 
     // 4 Tire Slip Bar Gauges: FL, FR, RL, RR

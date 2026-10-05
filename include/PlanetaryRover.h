@@ -97,6 +97,12 @@ public:
     // Wheel States (FL, FR, RL, RR)
     const WheelState& getWheel(int idx) const { return m_wheels[idx]; }
     bool isTCSActive() const { return m_tcsEngagedOverall; }
+    bool isHDCActive() const { return m_hdcActive; }
+    bool isESPActive() const { return m_espActive; }
+    bool isUnstuckActive() const { return m_unstuckActive; }
+
+    // Instant recovery / self-righting
+    void selfRight(PhysicsWorld& physics);
 
 private:
     void updatePurePursuit(float dt);
@@ -133,11 +139,16 @@ private:
     float m_wheelWidth;
     float m_antiRollBarStiffness;
 
-    // Controls
+    // Controls & Active Safety Systems
     float m_throttleInput;
     float m_steerInput;
     float m_brakeInput;
     bool m_tcsEngagedOverall;
+    bool m_hdcActive;        // Hill Descent Control (active braking on downhill)
+    bool m_espActive;        // Electronic Stability Program (anti-rollover torque)
+    bool m_unstuckActive;    // Anti-stuck wheel sweep & high-torque burst
+    float m_stuckTimer;
+    float m_unstuckTimer;
 
     // Autonomous Pure Pursuit State
     std::vector<Vector3> m_waypoints;

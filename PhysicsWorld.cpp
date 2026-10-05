@@ -350,7 +350,8 @@ JPH::BodyID PhysicsWorld::createChassisBody(Vector3 pos, Vector3 halfExtents, fl
     if (!m_initialized) return JPH::BodyID();
 
     JPH::ShapeRefC boxShape = new JPH::BoxShape(JPH::Vec3(halfExtents.x, halfExtents.y, halfExtents.z));
-    JPH::ShapeRefC offsetShape = new JPH::OffsetCenterOfMassShape(boxShape, JPH::Vec3(0.0f, -0.25f, 0.0f));
+    // Ballasted belly center of mass (lowered undercarriage, matching Mars rover physics)
+    JPH::ShapeRefC offsetShape = new JPH::OffsetCenterOfMassShape(boxShape, JPH::Vec3(0.0f, -0.36f, 0.0f));
 
     JPH::BodyCreationSettings settings(
         offsetShape,
@@ -361,10 +362,10 @@ JPH::BodyID PhysicsWorld::createChassisBody(Vector3 pos, Vector3 halfExtents, fl
     );
     settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
     settings.mMassPropertiesOverride.mMass = mass;
-    settings.mFriction = 0.65f;
+    settings.mFriction = 0.70f;
     settings.mRestitution = 0.05f;
-    settings.mLinearDamping = 0.08f;
-    settings.mAngularDamping = 0.35f;
+    settings.mLinearDamping = 0.12f;
+    settings.mAngularDamping = 0.85f; // Strongly damps pitch/roll oscillations under Martian gravity
 
     JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
     return bodyInterface.CreateAndAddBody(settings, JPH::EActivation::Activate);

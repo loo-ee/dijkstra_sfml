@@ -307,6 +307,9 @@ int main() {
                 rover.setPath(dijkstra.getShortestPathNodes());
             }
         }
+        if (IsKeyPressed(KEY_U)) {
+            rover.selfRight(physics);
+        }
         if (IsKeyPressed(KEY_G)) {
             if (physics.getGravity() < -6.0f) {
                 physics.setGravity(-3.71f); // Martian Gravity
@@ -682,8 +685,9 @@ int main() {
             DrawText("ROVER NAVIGATION", c2X, deckY + 10, 10, Color{ 46, 204, 113, 255 });
             DrawKeyBind(c2X, deckY + 28, "Tab", rover.isAutonomous() ? "Pause Auto" : "Auto Drive");
             DrawKeyBind(c2X + 115, deckY + 28, "WASD", "Manual Steer");
-            DrawKeyBind(c2X, deckY + 54, "R", "Reset Rover");
-            DrawKeyBind(c2X + 115, deckY + 54, "G", (physics.getGravity() < -6.0f) ? "Grav: Earth" : "Grav: Mars");
+            DrawKeyBind(c2X, deckY + 54, "R", "Reset");
+            DrawKeyBind(c2X + 80, deckY + 54, "U", "Self-Right");
+            DrawKeyBind(c2X + 165, deckY + 54, "G", (physics.getGravity() < -6.0f) ? "Earth G" : "Mars G");
 
             // --- Column 3: Terrain & Dijkstra ---
             int c3X = deckX + 16 + static_cast<int>(colW * 2);
