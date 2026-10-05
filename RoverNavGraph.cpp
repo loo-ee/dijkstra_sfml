@@ -35,7 +35,7 @@ void RoverNavGraph::generateCenteredGrid(const TerrainHeightfield& terrain, Vect
     m_gridRows = gridRows;
     m_spacing = spacing;
     float radius = (std::max(gridCols, gridRows) * spacing) * 0.5f;
-    if (radius < 640.0f) radius = 640.0f; // Ensure full globe surface coverage!
+    if (radius < 96.0f) radius = 96.0f;
     generatePersistentPlanetaryGrid(terrain, centerPos, radius, spacing);
 }
 
@@ -49,7 +49,7 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
 
     float radiusSq = radius * radius;
     std::vector<Vertex3D*> newNodes;
-    newNodes.reserve(2048);
+    newNodes.reserve(512);
 
     // 1. Create Nodes Draped over Terrain for any unvisited cells within planetary radius
     for (int gz = minGz; gz <= maxGz; ++gz) {
@@ -60,6 +60,12 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
             float dx = worldX - centerPos.x;
             float dz = worldZ - centerPos.z;
             if (dx * dx + dz * dz > radiusSq) {
+                continue;
+            }
+
+            // Clamping to physical planetary dome surface (R_dome = 620m)
+            // Never generate nodes over the edge where terrain plunges into space!
+            if (worldX * worldX + worldZ * worldZ > 620.0f * 620.0f) {
                 continue;
             }
 
@@ -74,8 +80,14 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
 
             // Slope angle and traversability properties
             node->surfaceNormal = terrain.getNormal(worldX, worldZ);
-            node->slopeAngleRad = acosf(Clamp(node->surfaceNormal.y, -1.0f, 1.0f));
+
+            // Compute local slope relative to planetary spherical surface normal
+            const Vector3 planetCenter = { 0.0f, -1400.0f, 0.0f };
+            Vector3 localUp = Vector3Normalize(Vector3Subtract(node->position, planetCenter));
+            float dotUp = Clamp(Vector3DotProduct(node->surfaceNormal, localUp), -1.0f, 1.0f);
+            node->slopeAngleRad = acosf(dotUp);
             node->surfaceFriction = 0.70f;
+
             // Realistic rover mobility limit: slopes >= 22 deg (~40% grade) are impassable
             node->isWalkable = (node->slopeAngleRad < 22.0f * DEG2RAD);
 

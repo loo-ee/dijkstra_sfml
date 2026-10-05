@@ -162,8 +162,8 @@ static void ApplyTerrainPreset(
         }
     }
 
-    // Drape 3D NavGraph across the ENTIRE Planetary Surface (Radius 640m, covering the whole globe!)
-    navGraph.generatePersistentPlanetaryGrid(terrain, Vector3{ 0.0f, 0.0f, 0.0f }, 640.0f, 16.0f);
+    // Lazy-Loaded Discovery: Unveil local exploration network around landing site (radius 110m, spacing 12m)
+    navGraph.generatePersistentPlanetaryGrid(terrain, Vector3{ 0.0f, 0.0f, 0.0f }, 110.0f, 12.0f);
     navGraph.validateEdgesWithPhysics(physics, 0.6f);
 
     blockedEdgeCount = 0;
@@ -212,7 +212,7 @@ int main() {
 
     // 5. Infinite Procedural Chunk Manager
     ChunkManager chunkMgr;
-    bool infiniteWorldMode = true;
+    bool infiniteWorldMode = false;
 
     // 6. 3D NavGraph
     RoverNavGraph navGraph;
@@ -256,18 +256,24 @@ int main() {
         // Update Autonomous Planetary Rover & Pure Pursuit Navigation
         rover.update(physics, dt);
 
-        // Dynamic Persistent Planetary Expansion:
-        // As camera or rover moves, dynamically generate more nodes and area in the process
-        // while preserving existing nodes and terrain so the user can always return!
+        // Lazy-Loaded Dynamic Exploration Discovery:
+        // As rover or camera moves into undiscovered areas, lazily unveil new nodes (radius 96m)
+        // while preserving all previously discovered nodes and areas with 60 FPS performance!
         Vector3 explorationCenter = (rover.getCameraMode() == RoverCameraMode::ORBIT)
                                     ? cameraController.getCamera().target
                                     : rover.getPosition();
 
-        if (Vector3Distance(explorationCenter, lastNavGraphCenter) > 35.0f) {
-            lastNavGraphCenter = explorationCenter;
-            navGraph.generatePersistentPlanetaryGrid(terrain, lastNavGraphCenter, 640.0f, 16.0f);
+        static Vector3 lastLazyDiscoveryPos = Vector3{ 0.0f, 0.0f, 0.0f };
+        static float lastDiscoveryTime = 0.0f;
+        float now = static_cast<float>(GetTime());
+
+        float distFromLastLazy = Vector3Distance(explorationCenter, lastLazyDiscoveryPos);
+        if (distFromLastLazy > 18.0f && (now - lastDiscoveryTime > 0.06f)) {
+            lastLazyDiscoveryPos = explorationCenter;
+            lastDiscoveryTime = now;
+            navGraph.generatePersistentPlanetaryGrid(terrain, explorationCenter, 96.0f, 12.0f);
             if (infiniteWorldMode) {
-                chunkMgr.update(lastNavGraphCenter, terrain, physics);
+                chunkMgr.update(explorationCenter, terrain, physics);
             }
         }
 
