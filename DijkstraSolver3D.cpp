@@ -1,4 +1,5 @@
 #include "DijkstraSolver3D.h"
+#include "TerrainTraversabilityMLP.h"
 #include <cmath>
 #include <algorithm>
 #include <iostream>
@@ -10,6 +11,7 @@ DijkstraSolver3D::DijkstraSolver3D() {
 DijkstraSolver3D::~DijkstraSolver3D() {}
 
 void DijkstraSolver3D::applyPreset(int presetIndex) {
+    m_isNeuralMode = false;
     switch (presetIndex) {
         case 0:
             // Standard Martian Exploration (balanced energy & terrain traction)
@@ -42,6 +44,15 @@ void DijkstraSolver3D::applyPreset(int presetIndex) {
             m_weights.gamma = 3.5f;
             m_weights.delta = 1.0f;
             m_weights.name = "High-Traction Safety First";
+            break;
+        case 4:
+            // Neural Network Traversability (Learned Terramechanics MLP)
+            m_weights.alpha = 2.0f;
+            m_weights.beta = 1.8f;
+            m_weights.gamma = 1.0f;
+            m_weights.delta = 0.8f;
+            m_weights.name = "Neural Network Traversability (MLP)";
+            m_isNeuralMode = true;
             break;
         default:
             break;
@@ -81,6 +92,7 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
     // 2. Cross-Slope / Side-Hill (Roll Risk) Penalty
     // Traversing along the flank of a steep slope or cliff exposes the rover to severe lateral roll/tip-over.
     float sideSlopePenalty = 0.0f;
+    float sideSlopeRad = 0.0f;
     Vector3 avgNormal = Vector3Normalize(Vector3Add(u->surfaceNormal, v->surfaceNormal));
     float gradLen = sqrtf(avgNormal.x * avgNormal.x + avgNormal.z * avgNormal.z);
     if (gradLen > 0.05f && horizDist > 1e-3f) {
@@ -89,7 +101,7 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
         // Magnitude of 2D cross product gives |sin(angle)| between horizontal motion and slope fall-line
         float sinSide = fabsf(travelDir.x * gradDir.y - travelDir.y * gradDir.x);
         float localSlope = std::max(u->slopeAngleRad, v->slopeAngleRad);
-        float sideSlopeRad = localSlope * sinSide;
+        sideSlopeRad = localSlope * sinSide;
         float sideSlopeDeg = sideSlopeRad * RAD2DEG;
 
         // Above 18 degrees cross-slope: critical lateral rollover hazard -> strictly impassable
@@ -123,6 +135,38 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
     }
     float cliffBufferPenalty = 4.0f * (maxCliffProx * maxCliffProx);
 
+    float maxSlopeRad = std::max(segmentSlopeRad, std::max(u->slopeAngleRad, v->slopeAngleRad));
+    float mu_s = 0.5f * (u->surfaceFriction + v->surfaceFriction);
+    if (mu_s < 0.05f) mu_s = 0.05f;
+
+    // Phase 6: Neural Network Traversability Inference (MLP Forward Pass)
+    if (m_isNeuralMode) {
+        float turnDev = 0.0f;
+        if (parentOfU != nullptr) {
+            Vector2 inDir = Vector2Normalize(Vector2{ u->position.x - parentOfU->position.x, u->position.z - parentOfU->position.z });
+            Vector2 outDir = Vector2Normalize(Vector2{ v->position.x - u->position.x, v->position.z - u->position.z });
+            float cosDpsi = Clamp(inDir.x * outDir.x + inDir.y * outDir.y, -1.0f, 1.0f);
+            turnDev = 1.0f - cosDpsi;
+        }
+
+        float inFeatures[8] = {
+            dy / d,
+            segmentSlopeRad,
+            maxSlopeRad,
+            sideSlopeRad,
+            deltaNormal,
+            maxCliffProx,
+            mu_s,
+            turnDev
+        };
+
+        auto mlResult = TerrainTraversabilityMLP::predict(inFeatures);
+        if (!mlResult.isPassable) {
+            return std::numeric_limits<float>::infinity();
+        }
+        return d * mlResult.costMultiplier;
+    }
+
     // 5. Elevation Delta & Gravity / Braking Work
     float gravityFactor = 0.0f;
     if (dy >= 0.0f) {
@@ -136,10 +180,6 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
     }
 
     // 6. Slope Traction & Coulomb Friction Slip
-    float maxSlopeRad = std::max(segmentSlopeRad, std::max(u->slopeAngleRad, v->slopeAngleRad));
-    float mu_s = 0.5f * (u->surfaceFriction + v->surfaceFriction);
-    if (mu_s < 0.05f) mu_s = 0.05f;
-
     float tanTheta = tanf(maxSlopeRad);
     if (tanTheta > mu_s) {
         return std::numeric_limits<float>::infinity();

@@ -94,11 +94,13 @@ public:
     // Result Path & Telemetry
     std::vector<const Vertex3D*> getShortestPathNodes() const;
     const PathStats& getPathStats() const { return m_pathStats; }
+    bool isNeuralMode() const { return m_isNeuralMode; }
 
 private:
     void computePathStats();
 
     CostWeights m_weights;
+    bool m_isNeuralMode = false;
     Vertex3D* m_startNode = nullptr;
     Vertex3D* m_endNode = nullptr;
     std::vector<Vertex3D*> m_allVertices;

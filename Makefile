@@ -35,7 +35,7 @@ EMCC_FLAGS = -s WASM=1 \
              -O3
 WASM_TARGET = $(WASM_BUILD_DIR)/index.html
 
-.PHONY: all wasm desktop run-desktop rover run-rover deploy clean check-raylib help
+.PHONY: all wasm desktop run-desktop rover run-rover train-mlp deploy clean check-raylib help
 
 all: wasm
 
@@ -76,6 +76,10 @@ rover: external/JoltPhysics/Build/libJolt.a $(ROVER_SRCS)
 run-rover: rover
 	./$(ROVER_TARGET)
 
+# Retrain Neural Network Traversability MLP
+train-mlp:
+	@/usr/bin/python3 scripts/train_mlp.py
+
 # Clean Build Artifacts
 clean:
 	rm -rf $(BUILD_DIR)
@@ -97,6 +101,7 @@ help:
 	@echo "  make check-raylib - Verify Raylib installation and paths"
 	@echo "  make rover        - Build native 3D simulation binary (Raylib)"
 	@echo "  make run-rover    - Build and execute 3D rover simulation"
+	@echo "  make train-mlp    - Train PINN traversability MLP and export C++ header"
 	@echo "  make wasm         - Compile WebAssembly bundle to build/wasm/index.html"
 	@echo "  make deploy       - Build WASM and copy assets to portfolio frontend directory"
 	@echo "  make desktop      - Build native desktop binary (SFML legacy)"

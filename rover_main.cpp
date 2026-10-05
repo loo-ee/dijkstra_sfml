@@ -16,8 +16,8 @@
 #include "PlanetaryRover.h"
 #include "RoverTelemetryHUD.h"
 
-// Helper: Render a modern, high-contrast keybinding badge pill with text
-static void DrawKeyBind(int x, int y, const char* key, const char* label, bool active = true) {
+// Helper: Render a modern, high-contrast keybinding badge pill with text, returning total width
+static int DrawKeyBind(int x, int y, const char* key, const char* label, bool active = true) {
     int keyW = MeasureText(key, 11);
     int padX = 5;
     int h = 18;
@@ -31,8 +31,10 @@ static void DrawKeyBind(int x, int y, const char* key, const char* label, bool a
     DrawRectangleRoundedLines(badgeRect, 0.35f, 4, badgeBorder);
     DrawText(key, x + padX, y + 4, 11, keyColor);
 
-    int labelX = x + keyW + padX * 2 + 6;
+    int labelX = x + keyW + padX * 2 + 5;
     DrawText(label, labelX, y + 4, 11, labelColor);
+
+    return (keyW + padX * 2 + 5 + MeasureText(label, 11));
 }
 
 // Helper: Load/Switch Terrain Mode Presets with customized physical landscapes & obstacles
@@ -189,6 +191,7 @@ int main() {
     bool showEdges = true;
     bool showNodes = true;
     bool showBoulders = true;
+    bool showSpheres = true;
     bool showWireframe = false;
     bool showHUD = true;
 
@@ -320,6 +323,13 @@ int main() {
                                       navGraph.getVertices(), navGraph.getBlockedEdgesMap());
             rover.setPath(dijkstra.getShortestPathNodes());
         }
+        if (IsKeyPressed(KEY_FIVE)) {
+            currentPresetIndex = 4;
+            dijkstra.applyPreset(4);
+            dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
+                                      navGraph.getVertices(), navGraph.getBlockedEdgesMap());
+            rover.setPath(dijkstra.getShortestPathNodes());
+        }
 
         // Phase 5: Planetary Rover Driving Controls & Camera Focus
         if (IsKeyPressed(KEY_TAB)) {
@@ -379,15 +389,19 @@ int main() {
             rover.setBrakeInput(manualBrake);
         }
 
-        // Dijkstra Algorithm Playback & Scrubbing Keys
+        // Dijkstra Algorithm Playback & Scrubbing Keys (scrub with Left/Right when autonomous, or [ / ] anytime)
         if (IsKeyPressed(KEY_P)) {
             dijkstra.togglePlay();
         }
-        if (IsKeyPressed(KEY_RIGHT)) {
-            dijkstra.stepForward();
+        if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_RIGHT_BRACKET)) {
+            if (rover.isAutonomous() || IsKeyPressed(KEY_RIGHT_BRACKET)) {
+                dijkstra.stepForward();
+            }
         }
-        if (IsKeyPressed(KEY_LEFT)) {
-            dijkstra.stepBackward();
+        if (IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_LEFT_BRACKET)) {
+            if (rover.isAutonomous() || IsKeyPressed(KEY_LEFT_BRACKET)) {
+                dijkstra.stepBackward();
+            }
         }
         if (IsKeyPressed(KEY_ENTER)) {
             dijkstra.jumpToEnd();
@@ -425,12 +439,13 @@ int main() {
             physics.clearDynamicSpheres();
         }
 
-        // Keyboard Display Controls
+        // Keyboard Display Controls (All conflict-free hotkeys)
         if (IsKeyPressed(KEY_T)) showTerrain = !showTerrain;
         if (IsKeyPressed(KEY_E)) showEdges = !showEdges;
         if (IsKeyPressed(KEY_N)) showNodes = !showNodes;
         if (IsKeyPressed(KEY_O)) showBoulders = !showBoulders;
-        if (IsKeyPressed(KEY_W)) showWireframe = !showWireframe;
+        if (IsKeyPressed(KEY_Z)) showSpheres = !showSpheres;
+        if (IsKeyPressed(KEY_K)) showWireframe = !showWireframe; // K toggle (avoids conflict with W gas pedal)
         if (IsKeyPressed(KEY_H)) showHUD = !showHUD;
 
         // Render Frame
@@ -525,10 +540,12 @@ int main() {
             rover.render(sceneTime);
 
             // I. Draw Dynamic Rolling Test Spheres (Synchronized with Jolt Physics rigid bodies)
-            for (auto sphereId : physics.getDynamicSpheres()) {
-                Vector3 pos = physics.getBodyPosition(sphereId);
-                DrawSphere(pos, 1.2f, Color{ 0, 185, 255, 255 });
-                DrawSphereWires(pos, 1.2f, 8, 8, ColorAlpha(WHITE, 0.75f));
+            if (showSpheres) {
+                for (auto sphereId : physics.getDynamicSpheres()) {
+                    Vector3 pos = physics.getBodyPosition(sphereId);
+                    DrawSphere(pos, 1.2f, Color{ 0, 185, 255, 255 });
+                    DrawSphereWires(pos, 1.2f, 8, 8, ColorAlpha(WHITE, 0.75f));
+                }
             }
 
             // J. Highlight Hovered Node with Targeting Ring
@@ -586,10 +603,17 @@ int main() {
 
             // Row 2: Active Cost Preset & Parameters
             const auto& w = dijkstra.getWeights();
-            DrawText(TextFormat("Cost Preset [%d]: %s", currentPresetIndex + 1, w.name.c_str()), 
-                hudX + 16, hudY + 90, 11, Color{ 240, 200, 80, 255 });
-            DrawText(TextFormat("Weights: alpha=%.1f (Work) | beta=%.1f (Slip) | gamma=%.1f | delta=%.1f", 
-                w.alpha, w.beta, w.gamma, w.delta), hudX + 16, hudY + 106, 10, Color{ 160, 175, 195, 255 });
+            if (dijkstra.isNeuralMode()) {
+                DrawText(TextFormat("Cost Preset [5]: %s", w.name.c_str()), 
+                    hudX + 16, hudY + 90, 11, Color{ 60, 230, 175, 255 });
+                DrawText("Engine: 3-Layer PINN MLP (8 -> 32 -> 16 -> 1) | <0.05 us/edge | Zero-Alloc", 
+                    hudX + 16, hudY + 106, 10, Color{ 140, 235, 205, 255 });
+            } else {
+                DrawText(TextFormat("Cost Preset [%d]: %s", currentPresetIndex + 1, w.name.c_str()), 
+                    hudX + 16, hudY + 90, 11, Color{ 240, 200, 80, 255 });
+                DrawText(TextFormat("Weights: alpha=%.1f (Work) | beta=%.1f (Slip) | gamma=%.1f | delta=%.1f", 
+                    w.alpha, w.beta, w.gamma, w.delta), hudX + 16, hudY + 106, 10, Color{ 160, 175, 195, 255 });
+            }
 
             DrawLine(hudX + 16, hudY + 122, hudX + hudW - 16, hudY + 122, Color{ 35, 48, 70, 255 });
 
@@ -724,43 +748,59 @@ int main() {
             // --- Column 1: Camera Controls ---
             int c1X = deckX + 16;
             DrawText("CAMERA CONTROLS", c1X, deckY + 10, 10, Color{ 100, 185, 255, 255 });
-            DrawKeyBind(c1X, deckY + 28, "RMB Drag", "Orbit");
-            DrawKeyBind(c1X + 105, deckY + 28, "Wheel", "Zoom to Cursor");
-            DrawKeyBind(c1X, deckY + 54, "MMB / Shift+RMB", "Pan");
-            DrawKeyBind(c1X + 145, deckY + 54, "F", "Focus Rover");
+            int x1 = c1X;
+            x1 += DrawKeyBind(x1, deckY + 28, "RMB Drag", "Orbit") + 8;
+            DrawKeyBind(x1, deckY + 28, "Wheel", "Zoom");
+            int x2 = c1X;
+            x2 += DrawKeyBind(x2, deckY + 54, "MMB", "Pan") + 8;
+            x2 += DrawKeyBind(x2, deckY + 54, "F", "Focus") + 8;
+            DrawKeyBind(x2, deckY + 54, "Sh+R", "Reset");
 
             // --- Column 2: Rover Navigation ---
             int c2X = deckX + 16 + static_cast<int>(colW);
             DrawLine(c2X - 12, deckY + 10, c2X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
-            DrawText("ROVER NAVIGATION", c2X, deckY + 10, 10, Color{ 46, 204, 113, 255 });
-            DrawKeyBind(c2X, deckY + 28, "Tab", rover.isAutonomous() ? "Pause Auto" : "Auto Drive");
-            DrawKeyBind(c2X + 115, deckY + 28, "WASD", "Manual Steer");
-            DrawKeyBind(c2X, deckY + 54, "R", "Reset");
-            DrawKeyBind(c2X + 75, deckY + 54, "U", "Self-Right");
-
+            DrawText("ROVER NAVIGATION (WASD)", c2X, deckY + 10, 10, Color{ 46, 204, 113, 255 });
+            int x3 = c2X;
+            x3 += DrawKeyBind(x3, deckY + 28, "Tab", rover.isAutonomous() ? "Manual" : "Auto Drive") + 8;
+            x3 += DrawKeyBind(x3, deckY + 28, "WASD", "Drive (S: Rev)") + 8;
+            DrawKeyBind(x3, deckY + 28, "Space", "Brake");
+            int x4 = c2X;
+            x4 += DrawKeyBind(x4, deckY + 54, "R", "Reset") + 8;
+            x4 += DrawKeyBind(x4, deckY + 54, "U", "Self-Right") + 8;
             const char* gKeyName = "Mars G";
             if (fabsf(physics.getGravity() + 1.62f) < 0.2f) gKeyName = "Moon G";
             else if (fabsf(physics.getGravity() + 9.81f) < 0.5f) gKeyName = "Earth G";
-            DrawKeyBind(c2X + 155, deckY + 54, "G", gKeyName);
+            DrawKeyBind(x4, deckY + 54, "G", gKeyName);
 
             // --- Column 3: Terrain & Dijkstra ---
             int c3X = deckX + 16 + static_cast<int>(colW * 2);
             DrawLine(c3X - 12, deckY + 10, c3X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
             DrawText("TERRAIN & DIJKSTRA", c3X, deckY + 10, 10, Color{ 241, 196, 15, 255 });
-            DrawKeyBind(c3X, deckY + 28, "M", "Terrain Mode");
-            DrawKeyBind(c3X + 115, deckY + 28, "1-4", "Cost Presets");
-            DrawKeyBind(c3X, deckY + 54, "P", dijkstra.isPlaying() ? "Pause" : "Play Replay");
-            DrawKeyBind(c3X + 115, deckY + 54, "Enter", "Finish Path");
+            int x5 = c3X;
+            x5 += DrawKeyBind(x5, deckY + 28, "M", "Terrain Mode") + 8;
+            DrawKeyBind(x5, deckY + 28, "1-5", "Cost Presets");
+            int x6 = c3X;
+            x6 += DrawKeyBind(x6, deckY + 54, "P", dijkstra.isPlaying() ? "Pause" : "Play") + 8;
+            x6 += DrawKeyBind(x6, deckY + 54, "Left/Right", "Step") + 8;
+            DrawKeyBind(x6, deckY + 54, "Enter", "Finish");
 
-            // --- Column 4: View & HUD Toggles ---
+            // --- Column 4: View & Simulation Toggles ---
             int c4X = deckX + 16 + static_cast<int>(colW * 3);
             DrawLine(c4X - 12, deckY + 10, c4X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
-            DrawText("VIEW & HUD TOGGLES", c4X, deckY + 10, 10, Color{ 190, 160, 240, 255 });
-            DrawKeyBind(c4X, deckY + 28, "H", "Toggle HUD");
-            DrawKeyBind(c4X + 105, deckY + 28, "V", "Cam Mode");
-            DrawKeyBind(c4X, deckY + 54, "B / X", "Drop Rocks");
-            DrawKeyBind(c4X + 90, deckY + 54, "C", "Clear");
-            DrawKeyBind(c4X + 155, deckY + 54, "T", "Terrain");
+            DrawText("VIEW & SIMULATION TOGGLES", c4X, deckY + 10, 10, Color{ 190, 160, 240, 255 });
+            int x7 = c4X;
+            x7 += DrawKeyBind(x7, deckY + 28, "H", "HUD") + 6;
+            x7 += DrawKeyBind(x7, deckY + 28, "V", "Cam") + 6;
+            x7 += DrawKeyBind(x7, deckY + 28, "T", "Terrain", showTerrain) + 6;
+            x7 += DrawKeyBind(x7, deckY + 28, "K", "Wire", showWireframe) + 6;
+            DrawKeyBind(x7, deckY + 28, "E", "Edges", showEdges);
+
+            int x8 = c4X;
+            x8 += DrawKeyBind(x8, deckY + 54, "N", "Nodes", showNodes) + 6;
+            x8 += DrawKeyBind(x8, deckY + 54, "O", "Rocks", showBoulders) + 6;
+            x8 += DrawKeyBind(x8, deckY + 54, "Z", "Spheres", showSpheres) + 6;
+            x8 += DrawKeyBind(x8, deckY + 54, "B/X", "Drop") + 6;
+            DrawKeyBind(x8, deckY + 54, "C", "Clear");
         } else {
             // Interactive floating button when HUD is hidden
             int btnW = 150;
