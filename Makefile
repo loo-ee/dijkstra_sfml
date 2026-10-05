@@ -17,12 +17,13 @@ NATIVE_CXXFLAGS = -std=c++17 -Wno-deprecated-declarations -I"$(SFML_PREFIX)/incl
 NATIVE_LDFLAGS = -L"$(SFML_PREFIX)/lib" -lsfml-graphics -lsfml-window -lsfml-system -lsfml-audio
 DESKTOP_TARGET = $(BUILD_DIR)/dijkstra-visualizer
 
-# Native 3D Simulation Flags (Raylib 6.0+)
+# Native 3D Simulation Flags (Raylib 6.0+ & Jolt Physics)
 RAYLIB_PREFIX ?= $(shell brew --prefix raylib 2>/dev/null || echo "/opt/homebrew")
-RAYLIB_CXXFLAGS = -std=c++17 -Wall -Iinclude -I"$(RAYLIB_PREFIX)/include"
-RAYLIB_LDFLAGS  = -L"$(RAYLIB_PREFIX)/lib" -lraylib \
+RAYLIB_CXXFLAGS = -std=c++17 -Wall -DNDEBUG -DJPH_DEBUG_RENDERER -DJPH_OBJECT_STREAM -DJPH_PROFILE_ENABLED -DJPH_USE_CPU_COMPUTE -DJPH_USE_MTL -Iinclude -Iexternal/JoltPhysics -I"$(RAYLIB_PREFIX)/include"
+RAYLIB_LDFLAGS  = -Lexternal/JoltPhysics/Build -lJolt \
+                  -L"$(RAYLIB_PREFIX)/lib" -lraylib \
                   -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
-ROVER_SRCS = rover_main.cpp GraphRenderer3D.cpp TerrainHeightfield.cpp RoverNavGraph.cpp
+ROVER_SRCS = rover_main.cpp GraphRenderer3D.cpp TerrainHeightfield.cpp RoverNavGraph.cpp PhysicsWorld.cpp
 ROVER_TARGET = $(BUILD_DIR)/rover-simulator
 
 # Emscripten WebAssembly Flags (SDL2 + SDL2_ttf WebGL backend)
@@ -60,8 +61,13 @@ desktop: $(SRCS)
 run-desktop: desktop
 	./$(DESKTOP_TARGET)
 
-# Build Native 3D Simulation (Raylib)
-rover: $(ROVER_SRCS)
+external/JoltPhysics/Build/libJolt.a:
+	@mkdir -p external/JoltPhysics/Build
+	cmake -B external/JoltPhysics/Build -S external/JoltPhysics/Build -DCMAKE_BUILD_TYPE=Release -DTARGET_UNIT_TESTS=OFF -DTARGET_HELLO_WORLD=OFF -DTARGET_PERFORMANCE_TEST=OFF -DTARGET_SAMPLES=OFF -DTARGET_VIEWER=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+	cmake --build external/JoltPhysics/Build -j 4
+
+# Build Native 3D Simulation (Raylib + Jolt)
+rover: external/JoltPhysics/Build/libJolt.a $(ROVER_SRCS)
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(RAYLIB_CXXFLAGS) $(ROVER_SRCS) -o $(ROVER_TARGET) $(RAYLIB_LDFLAGS)
 	@echo "Rover 3D simulation build complete: $(ROVER_TARGET)"

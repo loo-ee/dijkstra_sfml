@@ -6,10 +6,13 @@
 #include "Vertex3D.h"
 #include "TerrainHeightfield.h"
 
+class PhysicsWorld;
+
 struct GraphEdge3D {
     Vector3 start;
     Vector3 end;
     Color color;
+    bool isBlocked = false;
 };
 
 class RoverNavGraph {
@@ -23,6 +26,7 @@ public:
 
     void clear();
     void generateTerrainGrid(const TerrainHeightfield& terrain, int gridCols, int gridRows, float spacing);
+    void validateEdgesWithPhysics(PhysicsWorld& physics, float clearanceOffset = 0.6f);
     
     Vertex3D* getClosestNode(Vector3 worldPos);
     Vertex3D* pickNodeFromRay(Ray mouseRay, float pickRadius = 2.0f);

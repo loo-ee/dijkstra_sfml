@@ -105,7 +105,7 @@ To verify the Jolt integration before adding the complex rover:
 
 ## 6. Acceptance Criteria & Verification
 
-- [ ] Jolt Physics initializes, updates, and shuts down without memory leaks.
-- [ ] Physics terrain collision surface aligns precisely with the visual Raylib terrain mesh.
-- [ ] Test spheres bounce and roll along the slope contours under simulated gravity ($g = -9.81\text{ m/s}^2$ or Martian $g = -3.71\text{ m/s}^2$).
-- [ ] Dynamic raycasting successfully cuts graph edges intersecting with boulders.
+- [x] Jolt Physics initializes, updates, and shuts down without memory leaks.
+- [x] Physics terrain collision surface aligns precisely with the visual Raylib terrain mesh.
+- [x] Test spheres bounce and roll along the slope contours under simulated gravity ($g = -9.81\text{ m/s}^2$ or Martian $g = -3.71\text{ m/s}^2$).
+- [x] Dynamic raycasting successfully cuts graph edges intersecting with boulders.

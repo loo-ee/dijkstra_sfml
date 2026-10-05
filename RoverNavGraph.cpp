@@ -1,4 +1,5 @@
 #include "RoverNavGraph.h"
+#include "PhysicsWorld.h"
 #include <raymath.h>
 #include <limits>
 #include <algorithm>
@@ -101,6 +102,21 @@ void RoverNavGraph::generateTerrainGrid(const TerrainHeightfield& terrain, int g
     if (!m_vertices.empty()) {
         setStartNode(m_vertices.front());
         setEndNode(m_vertices.back());
+    }
+}
+
+void RoverNavGraph::validateEdgesWithPhysics(PhysicsWorld& physics, float clearanceOffset) {
+    Vector3 upOffset = { 0.0f, clearanceOffset, 0.0f };
+
+    for (auto& edge : m_edges) {
+        Vector3 from = Vector3Add(edge.start, upOffset);
+        Vector3 to = Vector3Add(edge.end, upOffset);
+
+        Vector3 hitPoint;
+        if (physics.raycast(from, to, &hitPoint)) {
+            edge.isBlocked = true;
+            edge.color = Color{ 220, 45, 45, 230 }; // Impassable collision obstruction
+        }
     }
 }
 
