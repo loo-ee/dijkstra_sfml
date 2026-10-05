@@ -233,6 +233,44 @@ void PhysicsWorld::createTerrainHeightfield(const float* heightData, int cols, i
     m_terrainBodyId = bodyInterface.CreateAndAddBody(bodySettings, JPH::EActivation::DontActivate);
 }
 
+JPH::BodyID PhysicsWorld::createChunkHeightField(const float* heightData, int resolution, float spacing, Vector3 worldOffset) {
+    if (!m_initialized || !heightData) return JPH::BodyID();
+
+    JPH::HeightFieldShapeSettings shapeSettings(
+        heightData,
+        JPH::Vec3(worldOffset.x, 0.0f, worldOffset.z),
+        JPH::Vec3(spacing, 1.0f, spacing),
+        static_cast<JPH::uint32>(resolution)
+    );
+
+    auto shapeResult = shapeSettings.Create();
+    if (!shapeResult.IsValid()) {
+        std::cerr << "Failed to create chunk HeightFieldShape: " << shapeResult.GetError() << std::endl;
+        return JPH::BodyID();
+    }
+
+    JPH::ShapeRefC shape = shapeResult.Get();
+    JPH::BodyCreationSettings bodySettings(
+        shape,
+        JPH::RVec3(0.0f, 0.0f, 0.0f),
+        JPH::Quat::sIdentity(),
+        JPH::EMotionType::Static,
+        Layers::NON_MOVING
+    );
+    bodySettings.mFriction = 0.70f;
+    bodySettings.mRestitution = 0.05f;
+
+    JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    return bodyInterface.CreateAndAddBody(bodySettings, JPH::EActivation::DontActivate);
+}
+
+void PhysicsWorld::removeChunkHeightField(JPH::BodyID bodyId) {
+    if (!m_initialized || bodyId.IsInvalid()) return;
+    JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    bodyInterface.RemoveBody(bodyId);
+    bodyInterface.DestroyBody(bodyId);
+}
+
 void PhysicsWorld::clearBoulders() {
     if (!m_initialized) return;
     JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();

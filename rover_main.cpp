@@ -10,6 +10,7 @@
 #include "GraphRenderer3D.h"
 #include "OrbitCameraController.h"
 #include "TerrainHeightfield.h"
+#include "ChunkManager.h"
 #include "RoverNavGraph.h"
 #include "PhysicsWorld.h"
 #include "DijkstraSolver3D.h"
@@ -41,6 +42,8 @@ static int DrawKeyBind(int x, int y, const char* key, const char* label, bool ac
 static void ApplyTerrainPreset(
     TerrainPreset preset,
     TerrainHeightfield& terrain,
+    ChunkManager& chunkMgr,
+    bool infiniteWorldMode,
     PhysicsWorld& physics,
     RoverNavGraph& navGraph,
     DijkstraSolver3D& dijkstra,
@@ -53,16 +56,22 @@ static void ApplyTerrainPreset(
     // Set realistic gravity for this planetary environment (Mars: 3.71, Moon: 1.62, Earth: 9.81)
     physics.setGravity(terrain.getPresetGravity());
 
-    float terrainSpacing = terrain.getSize() / (terrain.getResolution() - 1);
-    physics.createTerrainHeightfield(
-        terrain.getHeightData().data(),
-        terrain.getResolution(),
-        terrain.getResolution(),
-        terrainSpacing
-    );
-
     physics.clearBoulders();
     physics.clearDynamicSpheres();
+
+    if (infiniteWorldMode) {
+        chunkMgr.clear(physics);
+        chunkMgr.init(terrain, physics);
+        chunkMgr.update(Vector3{ 0.0f, 0.0f, 0.0f }, terrain, physics);
+    } else {
+        float terrainSpacing = terrain.getSize() / (terrain.getResolution() - 1);
+        physics.createTerrainHeightfield(
+            terrain.getHeightData().data(),
+            terrain.getResolution(),
+            terrain.getResolution(),
+            terrainSpacing
+        );
+    }
 
     struct BoulderPreset {
         Vector2 pos;
@@ -114,14 +123,20 @@ static void ApplyTerrainPreset(
         };
     }
 
-    for (const auto& bp : boulders) {
-        float h = terrain.getHeight(bp.pos.x, bp.pos.y);
-        Vector3 boulderPos = { bp.pos.x, h + bp.radius * 0.70f, bp.pos.y };
-        physics.spawnBoulder(boulderPos, bp.radius);
+    if (!infiniteWorldMode) {
+        for (const auto& bp : boulders) {
+            float h = terrain.getHeight(bp.pos.x, bp.pos.y);
+            Vector3 boulderPos = { bp.pos.x, h + bp.radius * 0.70f, bp.pos.y };
+            physics.spawnBoulder(boulderPos, bp.radius);
+        }
     }
 
     // Drape 3D NavGraph (26x26 = 676 nodes)
-    navGraph.generateTerrainGrid(terrain, 26, 26, 7.0f);
+    if (infiniteWorldMode) {
+        navGraph.generateCenteredGrid(terrain, Vector3{ 0.0f, 0.0f, 0.0f }, 26, 26, 7.0f);
+    } else {
+        navGraph.generateTerrainGrid(terrain, 26, 26, 7.0f);
+    }
     navGraph.validateEdgesWithPhysics(physics, 0.6f);
 
     blockedEdgeCount = 0;
@@ -168,20 +183,25 @@ int main() {
     // 4. Procedural Martian Terrain Heightfield
     TerrainHeightfield terrain(128, 200.0f);
 
-    // 5. 3D NavGraph
+    // 5. Infinite Procedural Chunk Manager
+    ChunkManager chunkMgr;
+    bool infiniteWorldMode = true;
+
+    // 6. 3D NavGraph
     RoverNavGraph navGraph;
 
-    // 6. Physics-Weighted 3D Dijkstra Solver with Snapshot History
+    // 7. Physics-Weighted 3D Dijkstra Solver with Snapshot History
     DijkstraSolver3D dijkstra;
     int currentPresetIndex = 0;
     dijkstra.applyPreset(currentPresetIndex);
 
-    // 7. Planetary Rover Rig
+    // 8. Planetary Rover Rig
     PlanetaryRover rover;
 
-    // 8. Initialize Default Scenario (The Olympus Crater)
+    // 9. Initialize Default Scenario (The Olympus Crater)
     int blockedEdgeCount = 0;
-    ApplyTerrainPreset(TerrainPreset::OLYMPUS_CRATER, terrain, physics, navGraph, dijkstra, rover, blockedEdgeCount);
+    ApplyTerrainPreset(TerrainPreset::OLYMPUS_CRATER, terrain, chunkMgr, infiniteWorldMode, physics, navGraph, dijkstra, rover, blockedEdgeCount);
+    Vector3 lastNavGraphCenter = rover.getPosition();
 
     // Initial rolling test sphere on slope
     physics.spawnDynamicSphere(Vector3{ 20.0f, terrain.getHeight(20.0f, -10.0f) + 6.0f, -10.0f }, 1.2f, 50.0f);
@@ -198,7 +218,7 @@ int main() {
     // Distant Martian pale blue sun position
     Vector3 sunPosition = { 160.0f, 110.0f, -130.0f };
 
-    // 9. Main Simulation Loop
+    // 10. Main Simulation Loop
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
         if (dt > 0.05f) dt = 0.05f;
@@ -208,6 +228,27 @@ int main() {
 
         // Update Autonomous Planetary Rover & Pure Pursuit Navigation
         rover.update(physics, dt);
+
+        // Infinite World Streaming & Dynamic Sliding NavGraph
+        if (infiniteWorldMode) {
+            chunkMgr.update(rover.getPosition(), terrain, physics);
+
+            // Dynamic sliding NavGraph: if rover travels > 28m away from graph center, re-center NavGraph!
+            if (Vector3Distance(rover.getPosition(), lastNavGraphCenter) > 28.0f) {
+                lastNavGraphCenter = rover.getPosition();
+                navGraph.generateCenteredGrid(terrain, lastNavGraphCenter, 26, 26, 7.0f);
+                navGraph.validateEdgesWithPhysics(physics, 0.6f);
+                blockedEdgeCount = 0;
+                for (const auto& e : navGraph.getEdges()) {
+                    if (e.isBlocked) blockedEdgeCount++;
+                }
+                Vertex3D* roverNode = navGraph.getClosestWalkableNode(rover.getPosition());
+                if (roverNode) navGraph.setStartNode(roverNode);
+                dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(),
+                                          navGraph.getVertices(), navGraph.getBlockedEdgesMap());
+                rover.setPath(dijkstra.getShortestPathNodes());
+            }
+        }
 
         // Handle Autonomous Dynamic Route Recalculation (Hazard / Boulder Avoidance)
         if (rover.isReplanRequested()) {
@@ -340,7 +381,13 @@ int main() {
         }
         if (IsKeyPressed(KEY_M)) {
             terrain.cyclePreset();
-            ApplyTerrainPreset(terrain.getPreset(), terrain, physics, navGraph, dijkstra, rover, blockedEdgeCount);
+            ApplyTerrainPreset(terrain.getPreset(), terrain, chunkMgr, infiniteWorldMode, physics, navGraph, dijkstra, rover, blockedEdgeCount);
+            lastNavGraphCenter = rover.getPosition();
+        }
+        if (IsKeyPressed(KEY_I)) {
+            infiniteWorldMode = !infiniteWorldMode;
+            ApplyTerrainPreset(terrain.getPreset(), terrain, chunkMgr, infiniteWorldMode, physics, navGraph, dijkstra, rover, blockedEdgeCount);
+            lastNavGraphCenter = rover.getPosition();
         }
         if (IsKeyPressed(KEY_V)) {
             rover.cycleCameraMode();
@@ -474,13 +521,17 @@ int main() {
             DrawSphereWires(sunPosition, 9.0f, 6, 6, ColorAlpha(Color{ 150, 200, 255, 255 }, 0.4f));
 
             // B. Draw Procedural Martian Terrain Mesh with High-Definition Surface Texture
-            if (showTerrain && terrain.isLoaded()) {
-                rlDisableBackfaceCulling();
-                DrawModel(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, WHITE);
-                rlEnableBackfaceCulling();
+            if (showTerrain) {
+                if (infiniteWorldMode) {
+                    chunkMgr.draw(showWireframe);
+                } else if (terrain.isLoaded()) {
+                    rlDisableBackfaceCulling();
+                    DrawModel(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, WHITE);
+                    rlEnableBackfaceCulling();
 
-                if (showWireframe) {
-                    DrawModelWires(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, ColorAlpha(BLACK, 0.2f));
+                    if (showWireframe) {
+                        DrawModelWires(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, ColorAlpha(BLACK, 0.2f));
+                    }
                 }
             }
 
@@ -587,16 +638,32 @@ int main() {
                 showHUD = false;
             }
 
-            // Row 1: Interactive Terrain Mode Switcher [M]
-            Rectangle tmRect = { (float)(hudX + 16), (float)(hudY + 52), (float)(hudW - 32), 22.0f };
+            // Row 1: Interactive Terrain Mode Switcher [M] & Infinite World Toggle [I]
+            Rectangle tmRect = { (float)(hudX + 16), (float)(hudY + 52), (float)(hudW - 160), 22.0f };
             bool tmHovered = CheckCollisionPointRec(mousePos, tmRect);
             DrawRectangleRounded(tmRect, 0.25f, 4, tmHovered ? Color{ 36, 52, 78, 255 } : Color{ 20, 28, 44, 255 });
             DrawRectangleRoundedLines(tmRect, 0.25f, 4, tmHovered ? Color{ 90, 170, 255, 255 } : Color{ 50, 75, 110, 255 });
-            DrawText(TextFormat("TERRAIN MODE [M]: %s", terrain.getPresetName()), hudX + 24, hudY + 57, 11, Color{ 100, 215, 255, 255 });
-            DrawText("[Click / M to Cycle]", hudX + hudW - 130, hudY + 58, 9, Color{ 150, 175, 205, 255 });
+            DrawText(TextFormat("TERRAIN [M]: %s", terrain.getPresetName()), hudX + 24, hudY + 57, 11, Color{ 100, 215, 255, 255 });
+
+            Rectangle infRect = { (float)(hudX + hudW - 136), (float)(hudY + 52), 120.0f, 22.0f };
+            bool infHovered = CheckCollisionPointRec(mousePos, infRect);
+            Color infBg = infiniteWorldMode ? Color{ 24, 60, 48, 255 } : Color{ 36, 36, 44, 255 };
+            if (infHovered) infBg = infiniteWorldMode ? Color{ 32, 80, 64, 255 } : Color{ 50, 50, 60, 255 };
+            Color infLine = infiniteWorldMode ? Color{ 46, 204, 113, 255 } : Color{ 120, 130, 150, 255 };
+            DrawRectangleRounded(infRect, 0.25f, 4, infBg);
+            DrawRectangleRoundedLines(infRect, 0.25f, 4, infLine);
+            DrawText(infiniteWorldMode ? TextFormat("[I] INF (%d Chk)", chunkMgr.getActiveChunkCount()) : "[I] BOUNDED", 
+                hudX + hudW - 128, hudY + 57, 10, infiniteWorldMode ? Color{ 60, 230, 175, 255 } : Color{ 170, 180, 195, 255 });
+
             if (tmHovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 terrain.cyclePreset();
-                ApplyTerrainPreset(terrain.getPreset(), terrain, physics, navGraph, dijkstra, rover, blockedEdgeCount);
+                ApplyTerrainPreset(terrain.getPreset(), terrain, chunkMgr, infiniteWorldMode, physics, navGraph, dijkstra, rover, blockedEdgeCount);
+                lastNavGraphCenter = rover.getPosition();
+            }
+            if (infHovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                infiniteWorldMode = !infiniteWorldMode;
+                ApplyTerrainPreset(terrain.getPreset(), terrain, chunkMgr, infiniteWorldMode, physics, navGraph, dijkstra, rover, blockedEdgeCount);
+                lastNavGraphCenter = rover.getPosition();
             }
 
             DrawLine(hudX + 16, hudY + 82, hudX + hudW - 16, hudY + 82, Color{ 35, 48, 70, 255 });
@@ -777,8 +844,9 @@ int main() {
             DrawLine(c3X - 12, deckY + 10, c3X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
             DrawText("TERRAIN & DIJKSTRA", c3X, deckY + 10, 10, Color{ 241, 196, 15, 255 });
             int x5 = c3X;
-            x5 += DrawKeyBind(x5, deckY + 28, "M", "Terrain Mode") + 8;
-            DrawKeyBind(x5, deckY + 28, "1-5", "Cost Presets");
+            x5 += DrawKeyBind(x5, deckY + 28, "M", "Preset") + 6;
+            x5 += DrawKeyBind(x5, deckY + 28, "I", infiniteWorldMode ? "Infinite" : "Bounded", infiniteWorldMode) + 6;
+            DrawKeyBind(x5, deckY + 28, "1-5", "Cost");
             int x6 = c3X;
             x6 += DrawKeyBind(x6, deckY + 54, "P", dijkstra.isPlaying() ? "Pause" : "Play") + 8;
             x6 += DrawKeyBind(x6, deckY + 54, "Left/Right", "Step") + 8;
@@ -828,6 +896,7 @@ int main() {
     }
 
     // Cleanup & Exit
+    chunkMgr.clear(physics);
     physics.shutdown();
     terrain.unload();
     navGraph.clear();

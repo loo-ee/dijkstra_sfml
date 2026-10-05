@@ -49,6 +49,7 @@ public:
     int getResolution() const { return m_resolution; }
     float getSize() const { return m_size; }
     const Model& getModel() const { return m_model; }
+    Texture2D getTexture() const { return m_texture; }
     const std::vector<float>& getHeightData() const { return m_heightData; }
     bool isLoaded() const { return m_isLoaded; }
 

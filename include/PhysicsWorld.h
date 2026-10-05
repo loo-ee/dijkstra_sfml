@@ -29,6 +29,8 @@ public:
 
     // Terrain & Obstacles
     void createTerrainHeightfield(const float* heightData, int cols, int rows, float spacing);
+    JPH::BodyID createChunkHeightField(const float* heightData, int resolution, float spacing, Vector3 worldOffset);
+    void removeChunkHeightField(JPH::BodyID bodyId);
     void spawnBoulder(Vector3 pos, float radius);
     void clearBoulders();
 

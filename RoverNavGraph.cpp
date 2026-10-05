@@ -25,6 +25,10 @@ void RoverNavGraph::clear() {
 }
 
 void RoverNavGraph::generateTerrainGrid(const TerrainHeightfield& terrain, int gridCols, int gridRows, float spacing) {
+    generateCenteredGrid(terrain, Vector3{ 0.0f, 0.0f, 0.0f }, gridCols, gridRows, spacing);
+}
+
+void RoverNavGraph::generateCenteredGrid(const TerrainHeightfield& terrain, Vector3 centerPos, int gridCols, int gridRows, float spacing) {
     clear();
 
     m_gridCols = gridCols;
@@ -39,8 +43,8 @@ void RoverNavGraph::generateTerrainGrid(const TerrainHeightfield& terrain, int g
     // 1. Create Nodes Draped over Terrain (+0.3m elevation offset to prevent z-fighting)
     for (int r = 0; r < gridRows; ++r) {
         for (int c = 0; c < gridCols; ++c) {
-            float worldX = c * spacing - offsetX;
-            float worldZ = r * spacing - offsetZ;
+            float worldX = centerPos.x + (c * spacing - offsetX);
+            float worldZ = centerPos.z + (r * spacing - offsetZ);
             float worldY = terrain.getHeight(worldX, worldZ) + 0.3f;
 
             std::string name = "N_" + std::to_string(c) + "_" + std::to_string(r);
