@@ -40,6 +40,7 @@ public:
 private:
     float evaluateRawHeight(float x, float z) const;
     float samplePerlin(float x, float z) const;
+    void generateSurfaceTexture();
 
     int m_resolution;
     float m_size;
@@ -47,5 +48,6 @@ private:
     std::vector<float> m_heightData;
     std::vector<CraterParam> m_craters;
     Model m_model = {};
+    Texture2D m_texture = {};
     bool m_isLoaded = false;
 };

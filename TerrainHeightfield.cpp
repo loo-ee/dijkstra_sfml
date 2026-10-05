@@ -86,6 +86,10 @@ TerrainHeightfield::~TerrainHeightfield() {
 void TerrainHeightfield::unload() {
     if (m_isLoaded) {
         UnloadModel(m_model);
+        if (m_texture.id != 0) {
+            UnloadTexture(m_texture);
+            m_texture = {};
+        }
         m_isLoaded = false;
     }
 }
@@ -196,8 +200,8 @@ void TerrainHeightfield::generate() {
             mesh.normals[vIdx * 3 + 1] = norm.y;
             mesh.normals[vIdx * 3 + 2] = norm.z;
 
-            mesh.texcoords[vIdx * 2 + 0] = static_cast<float>(gx) / (m_resolution - 1);
-            mesh.texcoords[vIdx * 2 + 1] = static_cast<float>(gz) / (m_resolution - 1);
+            mesh.texcoords[vIdx * 2 + 0] = static_cast<float>(gx) / (m_resolution - 1) * 20.0f;
+            mesh.texcoords[vIdx * 2 + 1] = static_cast<float>(gz) / (m_resolution - 1) * 20.0f;
 
             float slopeRad = acosf(Clamp(norm.y, -1.0f, 1.0f));
             Color vertexColor = getSlopeColor(slopeRad, norm);
@@ -233,7 +237,61 @@ void TerrainHeightfield::generate() {
     // Upload Mesh to GPU
     UploadMesh(&mesh, false);
     m_model = LoadModelFromMesh(mesh);
+
+    // Generate and bind high-resolution procedural Martian detail texture
+    generateSurfaceTexture();
+    m_model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = m_texture;
+
     m_isLoaded = true;
+}
+
+void TerrainHeightfield::generateSurfaceTexture() {
+    const int texW = 1024;
+    const int texH = 1024;
+
+    Image img = GenImageColor(texW, texH, Color{ 210, 115, 75, 255 });
+    Color* pixels = static_cast<Color*>(img.data);
+
+    for (int y = 0; y < texH; ++y) {
+        for (int x = 0; x < texW; ++x) {
+            float u = static_cast<float>(x) / texW;
+            float v = static_cast<float>(y) / texH;
+
+            // Multi-frequency noise for sand grain and dunes
+            float n1 = samplePerlin(u * 12.0f, v * 12.0f);
+            float n2 = samplePerlin(u * 36.0f, v * 36.0f);
+            float n3 = samplePerlin(u * 128.0f, v * 128.0f);
+
+            // Sand dune ripples
+            float ripples = sinf(u * 60.0f + n1 * 4.0f) * 0.08f;
+            float grain = n1 * 0.45f + n2 * 0.35f + n3 * 0.20f + ripples;
+
+            // Natural Martian ochre palette with micro-contrast
+            float r = Clamp(205.0f + grain * 45.0f, 160.0f, 245.0f);
+            float g = Clamp(105.0f + grain * 35.0f, 75.0f, 145.0f);
+            float b = Clamp(68.0f + grain * 25.0f, 48.0f, 100.0f);
+
+            // Scattered regolith pebbles / basalt flecks
+            if (((x * 7919 + y * 65537) & 0x7F) < 3) {
+                r *= 0.6f;
+                g *= 0.6f;
+                b *= 0.6f;
+            }
+
+            pixels[y * texW + x] = Color{
+                static_cast<unsigned char>(r),
+                static_cast<unsigned char>(g),
+                static_cast<unsigned char>(b),
+                255
+            };
+        }
+    }
+
+    m_texture = LoadTextureFromImage(img);
+    GenTextureMipmaps(&m_texture);
+    SetTextureFilter(m_texture, TEXTURE_FILTER_TRILINEAR);
+    SetTextureWrap(m_texture, TEXTURE_WRAP_REPEAT);
+    UnloadImage(img);
 }
 
 float TerrainHeightfield::getHeight(float x, float z) const {
@@ -289,27 +347,27 @@ float TerrainHeightfield::getSlopeAngleRad(float x, float z) const {
 Color TerrainHeightfield::getSlopeColor(float slopeRad, Vector3 normal) const {
     float slopeDeg = slopeRad * RAD2DEG;
 
-    // Section 2.3 Color Specifications:
-    // Slope < 15 deg: Reddish Martian dust (195, 92, 60)
-    // Slope 15 - 30 deg: Dark exposed bedrock (110, 68, 55)
-    // Slope > 30 deg: Charcoal basalt (60, 50, 48)
+    // Slope modulation tint for texture
+    // Slope < 15 deg: Vibrant Martian dust highlights
+    // Slope 15 - 30 deg: Exposed mineral bedrock
+    // Slope > 30 deg: Darker basalt ridge
     Color base;
     if (slopeDeg < 15.0f) {
-        base = Color{ 195, 92, 60, 255 };
+        base = Color{ 255, 245, 235, 255 };
     } else if (slopeDeg <= 30.0f) {
         float t = (slopeDeg - 15.0f) / 15.0f;
         base = Color{
-            static_cast<unsigned char>(Lerp(195, 110, t)),
-            static_cast<unsigned char>(Lerp(92, 68, t)),
-            static_cast<unsigned char>(Lerp(60, 55, t)),
+            static_cast<unsigned char>(Lerp(255, 195, t)),
+            static_cast<unsigned char>(Lerp(245, 165, t)),
+            static_cast<unsigned char>(Lerp(235, 150, t)),
             255
         };
     } else {
         float t = std::min(1.0f, (slopeDeg - 30.0f) / 15.0f);
         base = Color{
-            static_cast<unsigned char>(Lerp(110, 60, t)),
-            static_cast<unsigned char>(Lerp(68, 50, t)),
-            static_cast<unsigned char>(Lerp(55, 48, t)),
+            static_cast<unsigned char>(Lerp(195, 135, t)),
+            static_cast<unsigned char>(Lerp(165, 115, t)),
+            static_cast<unsigned char>(Lerp(150, 105, t)),
             255
         };
     }
@@ -317,7 +375,7 @@ Color TerrainHeightfield::getSlopeColor(float slopeRad, Vector3 normal) const {
     // Directional solar lighting for crisp topography relief
     Vector3 sunDir = Vector3Normalize(Vector3{ 0.4f, 0.85f, 0.35f });
     float diffuse = std::max(0.0f, Vector3DotProduct(normal, sunDir));
-    float lightFactor = 0.35f + 0.65f * diffuse; // Ambient + Diffuse
+    float lightFactor = 0.45f + 0.55f * diffuse; // Ambient + Diffuse
 
     return Color{
         static_cast<unsigned char>(Clamp(base.r * lightFactor, 0.0f, 255.0f)),

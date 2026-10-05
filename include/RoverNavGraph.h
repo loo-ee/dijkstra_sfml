@@ -34,6 +34,10 @@ public:
     void setStartNode(Vertex3D* node);
     void setEndNode(Vertex3D* node);
 
+    void buildEdgeMeshes();
+    void renderEdges() const;
+    void unloadEdgeMeshes();
+
     const std::vector<Vertex3D*>& getVertices() const { return m_vertices; }
     const std::vector<GraphEdge3D>& getEdges() const { return m_edges; }
     Vertex3D* getStartNode() const { return m_startNode; }
@@ -48,6 +52,10 @@ private:
     std::vector<GraphEdge3D> m_edges;
     Vertex3D* m_startNode = nullptr;
     Vertex3D* m_endNode = nullptr;
+
+    Model m_walkableEdgesModel = {};
+    Model m_blockedEdgesModel = {};
+    bool m_edgesModelsLoaded = false;
 
     int m_gridCols = 0;
     int m_gridRows = 0;

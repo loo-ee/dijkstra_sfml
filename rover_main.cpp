@@ -13,12 +13,12 @@
 #include "PhysicsWorld.h"
 
 int main() {
-    // 1. Window Initialization
+    // 1. High-DPI Window Initialization (Native Retina resolution on Apple Silicon)
     const int screenWidth = 1280;
     const int screenHeight = 720;
 
-    SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
-    InitWindow(screenWidth, screenHeight, "3D Planetary Rover Simulator - Jolt Physics Integration (Phase 3)");
+    SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT | FLAG_WINDOW_HIGHDPI);
+    InitWindow(screenWidth, screenHeight, "3D Planetary Rover Simulator - Martian Terrain & Physics");
     SetTargetFPS(60);
 
     // 2. Camera Setup (Panoramic overview of Martian terrain)
@@ -70,7 +70,7 @@ int main() {
 
     for (const auto& bp : boulderPresets) {
         float h = terrain.getHeight(bp.pos.x, bp.pos.y);
-        Vector3 boulderPos = { bp.pos.x, h + bp.radius * 0.75f, bp.pos.y };
+        Vector3 boulderPos = { bp.pos.x, h + bp.radius * 0.70f, bp.pos.y };
         physics.spawnBoulder(boulderPos, bp.radius);
     }
 
@@ -83,7 +83,6 @@ int main() {
     navGraph.generateTerrainGrid(terrain, navCols, navRows, navSpacing);
 
     // 8. Line-of-Sight Edge Validation using Physical Raycasts
-    // Cuts graph edges that intersect with boulders or sharp ground ridges
     navGraph.validateEdgesWithPhysics(physics, 0.6f);
 
     // Count blocked edges
@@ -105,10 +104,13 @@ int main() {
     bool showBoulders = true;
     bool showWireframe = false;
 
+    // Distant Martian pale blue sun position
+    Vector3 sunPosition = { 160.0f, 110.0f, -130.0f };
+
     // 10. Main Simulation Loop
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
-        if (dt > 0.05f) dt = 0.05f; // Clamp delta time for stable physics step
+        if (dt > 0.05f) dt = 0.05f;
 
         // Step Jolt Physics (60 Hz multi-threaded)
         physics.step(dt);
@@ -130,7 +132,7 @@ int main() {
             }
         }
 
-        // Spawn dynamic test sphere at hovered node or above terrain
+        // Spawn dynamic test sphere at hovered node or center
         if (IsKeyPressed(KEY_B)) {
             Vector3 dropPos;
             if (hoveredNode) {
@@ -170,12 +172,21 @@ int main() {
 
         // Render Frame
         BeginDrawing();
-        ClearBackground(Color{ 18, 20, 26, 255 }); // Martian night sky
+
+        // Atmospheric Sky Gradient: deep indigo space to warm dusky Martian horizon
+        DrawRectangleGradientV(0, 0, GetScreenWidth(), GetScreenHeight(), 
+            Color{ 12, 14, 24, 255 }, 
+            Color{ 72, 38, 30, 255 }
+        );
 
         // 3D Scene Rendering
         BeginMode3D(cameraController.getCamera());
         {
-            // A. Draw Procedural Martian Terrain Mesh
+            // A. Distant Martian Sun (pale blue disk with soft halo)
+            DrawSphere(sunPosition, 6.0f, Color{ 190, 225, 255, 255 });
+            DrawSphereWires(sunPosition, 9.0f, 6, 6, ColorAlpha(Color{ 150, 200, 255, 255 }, 0.4f));
+
+            // B. Draw Procedural Martian Terrain Mesh with High-Definition Surface Texture
             if (showTerrain && terrain.isLoaded()) {
                 DrawModel(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, WHITE);
 
@@ -184,62 +195,83 @@ int main() {
                 }
             }
 
-            // B. Draw Static Boulders (Physical obstacles)
+            // C. Draw Static Boulders (Craggy rock shading with sunlit facets)
             if (showBoulders) {
                 for (const auto& b : physics.getBoulders()) {
-                    DrawSphere(b.pos, b.radius, b.color);
-                    DrawSphereWires(b.pos, b.radius, 10, 10, ColorAlpha(BLACK, 0.35f));
+                    DrawSphere(b.pos, b.radius, Color{ 78, 56, 48, 255 });
+                    DrawSphere(Vector3Add(b.pos, Vector3{ 0.0f, b.radius * 0.18f, 0.0f }), b.radius * 0.88f, Color{ 115, 88, 76, 255 });
+                    DrawSphereWires(b.pos, b.radius, 6, 6, ColorAlpha(Color{ 35, 24, 20, 255 }, 0.45f));
                 }
             }
 
-            // C. Draw Draped NavGraph Edges
+            // D. Draw GPU-Batched Draped NavGraph Edges (2 fast GPU draw calls instead of 2,550 CPU calls)
             if (showEdges) {
-                for (const auto& edge : navGraph.getEdges()) {
-                    float radius = edge.isBlocked ? 0.16f : 0.08f;
-                    GraphRenderer3D::drawEdge(edge.start, edge.end, radius, edge.color);
-                }
+                navGraph.renderEdges();
             }
 
-            // D. Draw Draped NavGraph Nodes
+            // E. Draw Draped NavGraph Nodes (Sleek compact dots for regular nodes, beacons for Start/End)
             if (showNodes) {
                 for (const Vertex3D* v : navGraph.getVertices()) {
-                    float radius = (v == navGraph.getStartNode() || v == navGraph.getEndNode()) ? 1.6f : 0.70f;
-                    GraphRenderer3D::drawNode(*v, radius);
+                    if (v == navGraph.getStartNode() || v == navGraph.getEndNode()) {
+                        continue; // Drawn prominently below
+                    }
+                    Color nodeCol = GraphRenderer3D::getNodeColor(v->state);
+                    float r = (v->state == NodeState::IMPASSABLE) ? 0.30f : 0.38f;
+                    DrawSphere(v->position, r, nodeCol);
+                }
+
+                // Prominent START Beacon with vertical light pillar and pulsating ground ring
+                if (const Vertex3D* s = navGraph.getStartNode()) {
+                    Vector3 pillarTop = Vector3Add(s->position, Vector3{ 0.0f, 16.0f, 0.0f });
+                    DrawCylinderEx(s->position, pillarTop, 0.25f, 0.02f, 8, ColorAlpha(GREEN, 0.75f));
+                    DrawSphere(s->position, 1.4f, Color{ 46, 204, 113, 255 });
+                    DrawSphereWires(s->position, 1.4f, 8, 8, ColorAlpha(WHITE, 0.85f));
+                    float pulseR = 2.4f + sinf(static_cast<float>(GetTime()) * 4.0f) * 0.5f;
+                    DrawCircle3D(s->position, pulseR, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(GREEN, 0.7f));
+                }
+
+                // Prominent END Beacon with vertical light pillar and pulsating ground ring
+                if (const Vertex3D* e = navGraph.getEndNode()) {
+                    Vector3 pillarTop = Vector3Add(e->position, Vector3{ 0.0f, 16.0f, 0.0f });
+                    DrawCylinderEx(e->position, pillarTop, 0.25f, 0.02f, 8, ColorAlpha(RED, 0.75f));
+                    DrawSphere(e->position, 1.4f, Color{ 231, 76, 60, 255 });
+                    DrawSphereWires(e->position, 1.4f, 8, 8, ColorAlpha(WHITE, 0.85f));
+                    float pulseR = 2.4f + sinf(static_cast<float>(GetTime()) * 4.0f + 1.5f) * 0.5f;
+                    DrawCircle3D(e->position, pulseR, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(RED, 0.7f));
                 }
             }
 
-            // E. Draw Dynamic Rolling Test Spheres (Synchronized with Jolt Physics rigid bodies)
+            // F. Draw Dynamic Rolling Test Spheres (Synchronized with Jolt Physics rigid bodies)
             for (auto sphereId : physics.getDynamicSpheres()) {
                 Vector3 pos = physics.getBodyPosition(sphereId);
-                // Vivid cyan/blue rolling sphere
-                DrawSphere(pos, 1.2f, Color{ 46, 170, 240, 255 });
-                DrawSphereWires(pos, 1.2f, 10, 10, ColorAlpha(WHITE, 0.7f));
+                DrawSphere(pos, 1.2f, Color{ 0, 185, 255, 255 });
+                DrawSphereWires(pos, 1.2f, 8, 8, ColorAlpha(WHITE, 0.75f));
             }
 
-            // F. Highlight Hovered Node
+            // G. Highlight Hovered Node with Targeting Ring
             if (hoveredNode) {
-                DrawSphereWires(hoveredNode->position, 2.2f, 10, 10, GOLD);
-                DrawCircle3D(hoveredNode->position, 2.5f, Vector3{ 0.0f, 1.0f, 0.0f }, 90.0f, ColorAlpha(YELLOW, 0.6f));
+                DrawSphereWires(hoveredNode->position, 1.8f, 10, 10, GOLD);
+                DrawCircle3D(hoveredNode->position, 2.2f, Vector3{ 0.0f, 1.0f, 0.0f }, 90.0f, ColorAlpha(YELLOW, 0.8f));
             }
         }
         EndMode3D();
 
-        // 2D HUD & Telemetry Overlay
+        // 2D HUD & Telemetry Overlay (Sleek Glassmorphic Styling)
         DrawRectangle(16, 16, 450, 340, ColorAlpha(Color{ 10, 14, 22, 255 }, 0.90f));
-        DrawRectangleLines(16, 16, 450, 340, Color{ 55, 75, 105, 255 });
+        DrawRectangleLines(16, 16, 450, 340, Color{ 60, 80, 115, 255 });
 
         DrawText("Phase 3: Jolt Physics & Terrain Collision", 28, 26, 18, RAYWHITE);
         DrawText(TextFormat("FPS: %i (Target: 60) | Step: 60Hz", GetFPS()), 28, 52, 14, GREEN);
 
         // Physics Telemetry
-        DrawText(TextFormat("Jolt Physics: ACTIVE | Gravity: Martian (g = -3.71 m/s^2)"), 28, 72, 13, SKYBLUE);
+        DrawText("Jolt Physics: ACTIVE | Gravity: Martian (g = -3.71 m/s^2)", 28, 72, 13, SKYBLUE);
         DrawText(TextFormat("Static Boulders: %d | Dynamic Spheres: %d", 
             (int)physics.getBoulders().size(), (int)physics.getDynamicSpheres().size()), 28, 90, 13, RAYWHITE);
 
         DrawText(TextFormat("NavGraph: %d Nodes | %d Edges (%d CUT by Raycast)",
             (int)navGraph.getVertices().size(), 
             (int)navGraph.getEdges().size(), 
-            blockedEdgeCount), 28, 108, 13, (blockedEdgeCount > 0) ? Color{ 255, 100, 100, 255 } : LIGHTGRAY);
+            blockedEdgeCount), 28, 108, 13, (blockedEdgeCount > 0) ? Color{ 255, 110, 110, 255 } : LIGHTGRAY);
 
         // Picking Telemetry
         DrawText("Interactive 3D Picking:", 28, 132, 13, RAYWHITE);
@@ -263,10 +295,10 @@ int main() {
 
         // Edge Legend
         DrawText("NavGraph Edge Status:", 28, 194, 13, RAYWHITE);
-        DrawRectangle(32, 212, 14, 8, Color{ 90, 115, 145, 255 });
+        DrawRectangle(32, 212, 14, 8, Color{ 140, 175, 215, 255 });
         DrawText("Clear Line of Sight", 52, 209, 12, RAYWHITE);
 
-        DrawRectangle(212, 212, 14, 8, Color{ 220, 45, 45, 255 });
+        DrawRectangle(212, 212, 14, 8, Color{ 240, 45, 45, 255 });
         DrawText("Blocked (Boulder Cut)", 232, 209, 12, Color{ 255, 120, 120, 255 });
 
         // Physics Action Keys
