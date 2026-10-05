@@ -182,13 +182,21 @@ classDiagram
   - Interactive physics weight presets (Standard, Direct, Energy Saver, Safety First).
   - Algorithm playback controls and realistic planetary gravities (Mars, Moon, Earth).
 
-### Phase 6: Machine Learning Terrain Traversability & Navigation (Next Phase)
-- [ ] Implement self-supervised data logger collecting edge transitions, motor work, and wheel slip.
-- [ ] Train a lightweight Physics-Informed Traversability MLP in PyTorch.
-- [ ] Export weights to header-only C++ forward pass (`TerrainTraversabilityMLP.h`) and ONNX.
-- [ ] Integrate into `DijkstraSolver3D` as Preset 5 ("Neural Network Traversability").
-- [ ] Display ML confidence, slip hazard warnings, and inference latency in `RoverTelemetryHUD`.
+### Phase 6: Machine Learning Terrain Traversability & Navigation
+- [x] Implement self-supervised terramechanics data generator in Python (`scripts/train_mlp.py`).
+- [x] Train a 3-layer Physics-Informed Traversability MLP (`8 -> 32 -> 16 -> 1`).
+- [x] Export weights to zero-allocation header-only C++ forward pass (`include/TerrainTraversabilityMLP.h`, `<0.05 us/edge`).
+- [x] Integrate into `DijkstraSolver3D` as Preset 5 ("Neural Network Traversability").
+- [x] Display active PINN MLP status and real-time execution in telemetry HUD.
 *(See full design in [docs/ml-terrain-traversability-architecture.md](file:///Users/louie/Documents/GitHub/dijkstra_sfml/docs/ml-terrain-traversability-architecture.md))*
+
+### Phase 7: Infinite Chunk-Based Procedural Terrain (Next Phase)
+- [ ] Implement continuous world-space noise sampling (`getHeight(worldX, worldZ)`).
+- [ ] Create `TerrainChunk` ($64\text{m} \times 64\text{m}$) and `ChunkManager` with a sliding $3 \times 3$ active ring.
+- [ ] Dynamically attach/detach static `HeightFieldShape` colliders in Jolt Physics with object pooling.
+- [ ] Implement sliding-window NavGraph that shifts local exploration bounds with the rover.
+- [ ] Seed deterministic procedural boulders and impact craters using spatial coordinate hashing.
+*(See full design in [docs/infinite-procedural-terrain-architecture.md](file:///Users/louie/Documents/GitHub/dijkstra_sfml/docs/infinite-procedural-terrain-architecture.md))*
 
 ---
 
