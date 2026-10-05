@@ -63,11 +63,31 @@ void TerrainHeightfield::setPreset(TerrainPreset preset) {
 
 const char* TerrainHeightfield::getPresetName() const {
     switch (m_preset) {
-        case TerrainPreset::OLYMPUS_CRATER:   return "The Olympus Crater";
-        case TerrainPreset::SCREE_SLOPE:      return "Loose Scree Slope";
-        case TerrainPreset::BOULDER_SLALOM:   return "Martian Canyon Slalom";
-        case TerrainPreset::ACIDALIA_PLANITIA: return "Acidalia Planitia Dunes";
+        case TerrainPreset::OLYMPUS_CRATER:   return "The Olympus Crater [Mars]";
+        case TerrainPreset::SCREE_SLOPE:      return "Lunar Scree Slope [Moon]";
+        case TerrainPreset::BOULDER_SLALOM:   return "Martian Canyon Slalom [Mars]";
+        case TerrainPreset::ACIDALIA_PLANITIA: return "Terrestrial Proving Ground [Earth]";
         default: return "Unknown";
+    }
+}
+
+float TerrainHeightfield::getPresetGravity() const {
+    switch (m_preset) {
+        case TerrainPreset::OLYMPUS_CRATER:   return -3.71f; // Martian Gravity
+        case TerrainPreset::SCREE_SLOPE:      return -1.62f; // Lunar Gravity
+        case TerrainPreset::BOULDER_SLALOM:   return -3.71f; // Martian Gravity
+        case TerrainPreset::ACIDALIA_PLANITIA: return -9.81f; // Earth Gravity
+        default: return -3.71f;
+    }
+}
+
+const char* TerrainHeightfield::getEnvironmentName() const {
+    switch (m_preset) {
+        case TerrainPreset::OLYMPUS_CRATER:   return "Mars (g = 3.71 m/s²)";
+        case TerrainPreset::SCREE_SLOPE:      return "Moon (g = 1.62 m/s²)";
+        case TerrainPreset::BOULDER_SLALOM:   return "Mars (g = 3.71 m/s²)";
+        case TerrainPreset::ACIDALIA_PLANITIA: return "Earth (g = 9.81 m/s²)";
+        default: return "Mars (g = 3.71 m/s²)";
     }
 }
 

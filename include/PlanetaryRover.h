@@ -133,11 +133,8 @@ private:
     // Suspension & 4 Wheels
     WheelState m_wheels[4];
     float m_suspensionRestLength;
-    float m_springStiffness;
-    float m_springDamping;
     float m_wheelRadius;
     float m_wheelWidth;
-    float m_antiRollBarStiffness;
 
     // Controls & Active Safety Systems
     float m_throttleInput;

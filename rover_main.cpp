@@ -48,6 +48,9 @@ static void ApplyTerrainPreset(
     terrain.setPreset(preset);
     terrain.generate();
 
+    // Set realistic gravity for this planetary environment (Mars: 3.71, Moon: 1.62, Earth: 9.81)
+    physics.setGravity(terrain.getPresetGravity());
+
     float terrainSpacing = terrain.getSize() / (terrain.getResolution() - 1);
     physics.createTerrainHeightfield(
         terrain.getHeightData().data(),
@@ -311,10 +314,14 @@ int main() {
             rover.selfRight(physics);
         }
         if (IsKeyPressed(KEY_G)) {
-            if (physics.getGravity() < -6.0f) {
-                physics.setGravity(-3.71f); // Martian Gravity
+            // Cycle between realistic planetary gravities: Mars (-3.71) -> Moon (-1.62) -> Earth (-9.81)
+            float g = physics.getGravity();
+            if (fabsf(g + 3.71f) < 0.2f) {
+                physics.setGravity(-1.62f); // Switch to Moon Gravity
+            } else if (fabsf(g + 1.62f) < 0.2f) {
+                physics.setGravity(-9.81f); // Switch to Earth Gravity
             } else {
-                physics.setGravity(-9.81f); // Earth Gravity
+                physics.setGravity(-3.71f); // Switch to Mars Gravity
             }
         }
 
@@ -549,8 +556,13 @@ int main() {
             DrawLine(hudX + 16, hudY + 122, hudX + hudW - 16, hudY + 122, Color{ 35, 48, 70, 255 });
 
             // Row 3: Physics & NavGraph Infrastructure Telemetry
-            DrawText(TextFormat("Jolt Engine: %d Boulders | %d Cut Edges | Gravity: %.2f m/s²",
-                (int)physics.getBoulders().size(), blockedEdgeCount, physics.getGravity()),
+            const char* gravEnv = "Mars";
+            float gVal = fabsf(physics.getGravity());
+            if (fabsf(gVal - 1.62f) < 0.2f) gravEnv = "Moon";
+            else if (fabsf(gVal - 9.81f) < 0.5f) gravEnv = "Earth";
+
+            DrawText(TextFormat("Jolt Engine: %d Boulders | %d Cut Edges | Gravity: %.2f m/s² (%s) [G]",
+                (int)physics.getBoulders().size(), blockedEdgeCount, physics.getGravity(), gravEnv),
                 hudX + 16, hudY + 130, 11, RAYWHITE);
 
             // Row 4: Dijkstra Navigation Solution Status
@@ -686,8 +698,12 @@ int main() {
             DrawKeyBind(c2X, deckY + 28, "Tab", rover.isAutonomous() ? "Pause Auto" : "Auto Drive");
             DrawKeyBind(c2X + 115, deckY + 28, "WASD", "Manual Steer");
             DrawKeyBind(c2X, deckY + 54, "R", "Reset");
-            DrawKeyBind(c2X + 80, deckY + 54, "U", "Self-Right");
-            DrawKeyBind(c2X + 165, deckY + 54, "G", (physics.getGravity() < -6.0f) ? "Earth G" : "Mars G");
+            DrawKeyBind(c2X + 75, deckY + 54, "U", "Self-Right");
+
+            const char* gKeyName = "Mars G";
+            if (fabsf(physics.getGravity() + 1.62f) < 0.2f) gKeyName = "Moon G";
+            else if (fabsf(physics.getGravity() + 9.81f) < 0.5f) gKeyName = "Earth G";
+            DrawKeyBind(c2X + 155, deckY + 54, "G", gKeyName);
 
             // --- Column 3: Terrain & Dijkstra ---
             int c3X = deckX + 16 + static_cast<int>(colW * 2);

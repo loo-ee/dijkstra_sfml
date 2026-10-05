@@ -31,10 +31,12 @@ public:
     void generate();
     void unload();
 
-    // Terrain Preset Selection
+    // Terrain Preset & Realistic Environment Gravity
     void setPreset(TerrainPreset preset);
     TerrainPreset getPreset() const { return m_preset; }
     const char* getPresetName() const;
+    float getPresetGravity() const;
+    const char* getEnvironmentName() const;
     void cyclePreset();
 
     // Queries

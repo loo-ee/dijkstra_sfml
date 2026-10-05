@@ -24,11 +24,8 @@ PlanetaryRover::PlanetaryRover()
     , m_batteryJoules(0.0f)
     , m_currentPowerWatts(0.0f)
     , m_suspensionRestLength(0.48f)
-    , m_springStiffness(7500.0f)
-    , m_springDamping(1800.0f)
     , m_wheelRadius(0.40f)
     , m_wheelWidth(0.35f)
-    , m_antiRollBarStiffness(4000.0f)
     , m_throttleInput(0.0f)
     , m_steerInput(0.0f)
     , m_brakeInput(0.0f)
@@ -372,6 +369,24 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
     m_wheels[2].steerAngle = 0.0f;         // RL
     m_wheels[3].steerAngle = 0.0f;         // RR
 
+    // Dynamically calculate corner weight and stiffness for current environment gravity
+    float currentGravity = fabsf(physics.getGravity());
+    if (currentGravity < 0.2f) currentGravity = 3.71f;
+
+    // Corner static weight: F_c = (m * g) / 4
+    float cornerWeight = (m_mass * currentGravity) * 0.25f;
+    // Spring stiffness k tuned for ~0.15m natural sag under environment gravity
+    float springStiffness = cornerWeight / 0.15f;
+    // Near-critical damping: c = 2 * zeta * sqrt(k * m_corner) with zeta = 0.85
+    float mCorner = m_mass * 0.25f;
+    float springDamping = 2.0f * 0.85f * sqrtf(springStiffness * mCorner);
+    // Anti-roll bar stiffness dynamically scaled to corner weight
+    float arbStiffness = springStiffness * 0.35f;
+
+    // Maximum upward suspension force clamp (never exceeds 2.2x corner weight!)
+    // This strictly prevents the suspension from launching the rover into the air.
+    float maxSpringForce = cornerWeight * 2.2f;
+
     float totalWorkRate = 0.0f;
 
     // Step 1: Compute Raycast Suspension & Contact for all 4 wheels
@@ -398,7 +413,7 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
 
             // Distance along suspension ray to place wheel hub so tire contacts ground
             float desiredHubDist = hitDist - m_wheelRadius;
-            w.suspensionLength = Clamp(desiredHubDist, 0.10f, m_suspensionRestLength + 0.25f);
+            w.suspensionLength = Clamp(desiredHubDist, 0.12f, m_suspensionRestLength + 0.25f);
             w.suspensionCompression = Clamp(m_suspensionRestLength - w.suspensionLength, 0.0f, m_suspensionRestLength);
             w.worldWheelPos = Vector3Add(w.worldMountPos, Vector3Scale(rayDir, w.suspensionLength));
 
@@ -407,8 +422,8 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
             Vector3 mountVel = physics.getPointVelocity(m_chassisBodyId, w.worldMountPos);
             float vRel = Vector3DotProduct(mountVel, rayDir); // positive when compressing
 
-            float springForceMag = (m_springStiffness * w.suspensionCompression) + (m_springDamping * vRel);
-            springForceMag = Clamp(springForceMag, 0.0f, 16000.0f);
+            float springForceMag = (springStiffness * w.suspensionCompression) + (springDamping * vRel);
+            springForceMag = Clamp(springForceMag, 0.0f, maxSpringForce);
 
             // Apply suspension upward force to chassis
             Vector3 suspForce = Vector3Scale(m_up, springForceMag);
@@ -431,7 +446,7 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
             // Lateral Friction (Anti-skid cornering force)
             float muLateral = 0.85f;
             float maxLatForce = springForceMag * muLateral;
-            float latGripMag = -vLat * 5500.0f; // Cornering stiffness
+            float latGripMag = -vLat * (springStiffness * 0.85f);
             latGripMag = Clamp(latGripMag, -maxLatForce, maxLatForce);
             Vector3 lateralForceVec = Vector3Scale(tireRight, latGripMag);
             physics.applyForceAtPosition(m_chassisBodyId, lateralForceVec, w.contactPoint);
@@ -449,14 +464,14 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
                 m_tcsEngagedOverall = true;
             }
 
-            // Motor Drive Force (All-Wheel Drive 4WD)
-            const float maxMotorForcePerWheel = 2800.0f; // Newtons
+            // Motor Drive Force (All-Wheel Drive 4WD scaled with gravity)
+            const float maxMotorForcePerWheel = cornerWeight * 2.6f;
             float driveForceMag = m_throttleInput * maxMotorForcePerWheel * tcsFactor;
 
             // Braking Force
             if (m_brakeInput > 0.02f) {
-                float brakeMag = -vLong * 5000.0f * m_brakeInput;
-                brakeMag = Clamp(brakeMag, -springForceMag * 0.9f, springForceMag * 0.9f);
+                float brakeMag = -vLong * (cornerWeight * 4.0f) * m_brakeInput;
+                brakeMag = Clamp(brakeMag, -springForceMag * 0.95f, springForceMag * 0.95f);
                 driveForceMag += brakeMag;
             }
 
@@ -488,12 +503,12 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
 
     // Step 2: Anti-Roll Bar Stabilization (Front axle: 0-1, Rear axle: 2-3)
     float diffFront = m_wheels[0].suspensionCompression - m_wheels[1].suspensionCompression;
-    float arbForceF = diffFront * m_antiRollBarStiffness;
+    float arbForceF = diffFront * arbStiffness;
     physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, -arbForceF), m_wheels[0].worldMountPos);
     physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, +arbForceF), m_wheels[1].worldMountPos);
 
     float diffRear = m_wheels[2].suspensionCompression - m_wheels[3].suspensionCompression;
-    float arbForceR = diffRear * m_antiRollBarStiffness;
+    float arbForceR = diffRear * arbStiffness;
     physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, -arbForceR), m_wheels[2].worldMountPos);
     physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, +arbForceR), m_wheels[3].worldMountPos);
 
