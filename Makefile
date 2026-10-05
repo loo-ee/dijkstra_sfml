@@ -23,7 +23,7 @@ RAYLIB_CXXFLAGS = -std=c++17 -Wall -DNDEBUG -DJPH_DEBUG_RENDERER -DJPH_OBJECT_ST
 RAYLIB_LDFLAGS  = -Lexternal/JoltPhysics/Build -lJolt \
                   -L"$(RAYLIB_PREFIX)/lib" -lraylib \
                   -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
-ROVER_SRCS = rover_main.cpp GraphRenderer3D.cpp TerrainHeightfield.cpp RoverNavGraph.cpp PhysicsWorld.cpp DijkstraSolver3D.cpp
+ROVER_SRCS = rover_main.cpp GraphRenderer3D.cpp TerrainHeightfield.cpp RoverNavGraph.cpp PhysicsWorld.cpp DijkstraSolver3D.cpp PlanetaryRover.cpp RoverTelemetryHUD.cpp
 ROVER_TARGET = $(BUILD_DIR)/rover-simulator
 
 # Emscripten WebAssembly Flags (SDL2 + SDL2_ttf WebGL backend)

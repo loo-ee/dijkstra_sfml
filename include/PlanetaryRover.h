@@ -58,6 +58,10 @@ public:
     void setThrottleInput(float throttle) { m_throttleInput = throttle; }
     void setSteeringInput(float steer) { m_steerInput = steer; }
     void setBrakeInput(float brake) { m_brakeInput = brake; }
+    float getThrottle() const { return m_throttleInput; }
+    float getSteering() const { return m_steerInput; }
+    float getBrake() const { return m_brakeInput; }
+    bool isInitialized() const { return !m_chassisBodyId.IsInvalid(); }
 
     // Camera Views
     void cycleCameraMode();

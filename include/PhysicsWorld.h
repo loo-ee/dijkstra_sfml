@@ -42,7 +42,10 @@ public:
     void applyForceAtPosition(JPH::BodyID id, Vector3 force, Vector3 worldPos);
     void applyTorque(JPH::BodyID id, Vector3 torque);
     void getBodyTransform(JPH::BodyID id, Vector3& outPos, Quaternion& outRot) const;
+    void setBodyTransform(JPH::BodyID id, Vector3 pos, Quaternion rot);
     Vector3 getBodyLinearVelocity(JPH::BodyID id) const;
+    void setBodyLinearVelocity(JPH::BodyID id, Vector3 vel);
+    void setBodyAngularVelocity(JPH::BodyID id, Vector3 angVel);
     Vector3 getPointVelocity(JPH::BodyID id, Vector3 worldPos) const;
     void setGravity(float g);
     float getGravity() const;

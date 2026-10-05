@@ -384,11 +384,29 @@ void PhysicsWorld::getBodyTransform(JPH::BodyID id, Vector3& outPos, Quaternion&
     outRot = Quaternion{ q.GetX(), q.GetY(), q.GetZ(), q.GetW() };
 }
 
+void PhysicsWorld::setBodyTransform(JPH::BodyID id, Vector3 pos, Quaternion rot) {
+    if (id.IsInvalid() || !m_initialized) return;
+    JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    bodyInterface.SetPositionAndRotation(id, JPH::RVec3(pos.x, pos.y, pos.z), JPH::Quat(rot.x, rot.y, rot.z, rot.w), JPH::EActivation::Activate);
+}
+
 Vector3 PhysicsWorld::getBodyLinearVelocity(JPH::BodyID id) const {
     if (id.IsInvalid() || !m_initialized) return Vector3{ 0, 0, 0 };
     const JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
     JPH::Vec3 v = bodyInterface.GetLinearVelocity(id);
     return Vector3{ v.GetX(), v.GetY(), v.GetZ() };
+}
+
+void PhysicsWorld::setBodyLinearVelocity(JPH::BodyID id, Vector3 vel) {
+    if (id.IsInvalid() || !m_initialized) return;
+    JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    bodyInterface.SetLinearVelocity(id, JPH::Vec3(vel.x, vel.y, vel.z));
+}
+
+void PhysicsWorld::setBodyAngularVelocity(JPH::BodyID id, Vector3 angVel) {
+    if (id.IsInvalid() || !m_initialized) return;
+    JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    bodyInterface.SetAngularVelocity(id, JPH::Vec3(angVel.x, angVel.y, angVel.z));
 }
 
 Vector3 PhysicsWorld::getPointVelocity(JPH::BodyID id, Vector3 worldPos) const {

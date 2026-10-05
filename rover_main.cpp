@@ -13,6 +13,8 @@
 #include "RoverNavGraph.h"
 #include "PhysicsWorld.h"
 #include "DijkstraSolver3D.h"
+#include "PlanetaryRover.h"
+#include "RoverTelemetryHUD.h"
 
 // Helper: Render a modern, high-contrast keybinding badge pill with text
 static void DrawKeyBind(int x, int y, const char* key, const char* label, bool active = true) {
@@ -125,6 +127,13 @@ int main() {
     dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
                               navGraph.getVertices(), navGraph.getBlockedEdgesMap());
 
+    // 11. Phase 5: Autonomous Planetary Rover Rig & Telemetry
+    PlanetaryRover rover;
+    if (navGraph.getStartNode()) {
+        rover.init(physics, navGraph.getStartNode()->position);
+        rover.setPath(dijkstra.getShortestPathNodes());
+    }
+
     // Display options
     bool showTerrain = true;
     bool showEdges = true;
@@ -136,7 +145,7 @@ int main() {
     // Distant Martian pale blue sun position
     Vector3 sunPosition = { 160.0f, 110.0f, -130.0f };
 
-    // 11. Main Simulation Loop
+    // 12. Main Simulation Loop
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
         if (dt > 0.05f) dt = 0.05f;
@@ -144,14 +153,22 @@ int main() {
         // Step Jolt Physics (60 Hz multi-threaded)
         physics.step(dt);
 
-        // Update Orbital Camera
-        cameraController.update();
+        // Update Autonomous Planetary Rover & Pure Pursuit Navigation
+        rover.update(physics, dt);
+
+        // Active Camera (Smoothly blends Orbit, Chase, or Mast Camera)
+        Camera3D activeCamera = rover.getCamera(cameraController.getCamera());
+
+        // Update Orbital Camera (only when in Orbit mode)
+        if (rover.getCameraMode() == RoverCameraMode::ORBIT) {
+            cameraController.update();
+        }
 
         // Update Dijkstra Step-by-Step Playback
         dijkstra.update(dt);
 
         // 3D Raycast Mouse Picking for Nodes
-        Ray mouseRay = GetMouseRay(GetMousePosition(), cameraController.getCamera());
+        Ray mouseRay = GetMouseRay(GetMousePosition(), activeCamera);
         Vertex3D* hoveredNode = navGraph.pickNodeFromRay(mouseRay, 1.8f);
 
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -163,6 +180,7 @@ int main() {
                 }
                 dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
                                           navGraph.getVertices(), navGraph.getBlockedEdgesMap());
+                rover.setPath(dijkstra.getShortestPathNodes());
             }
         }
 
@@ -172,28 +190,71 @@ int main() {
             dijkstra.applyPreset(0);
             dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
                                       navGraph.getVertices(), navGraph.getBlockedEdgesMap());
+            rover.setPath(dijkstra.getShortestPathNodes());
         }
         if (IsKeyPressed(KEY_TWO)) {
             currentPresetIndex = 1;
             dijkstra.applyPreset(1);
             dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
                                       navGraph.getVertices(), navGraph.getBlockedEdgesMap());
+            rover.setPath(dijkstra.getShortestPathNodes());
         }
         if (IsKeyPressed(KEY_THREE)) {
             currentPresetIndex = 2;
             dijkstra.applyPreset(2);
             dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
                                       navGraph.getVertices(), navGraph.getBlockedEdgesMap());
+            rover.setPath(dijkstra.getShortestPathNodes());
         }
         if (IsKeyPressed(KEY_FOUR)) {
             currentPresetIndex = 3;
             dijkstra.applyPreset(3);
             dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
                                       navGraph.getVertices(), navGraph.getBlockedEdgesMap());
+            rover.setPath(dijkstra.getShortestPathNodes());
+        }
+
+        // Phase 5: Planetary Rover Driving Controls
+        if (IsKeyPressed(KEY_D)) {
+            rover.toggleAutonomous();
+        }
+        if (IsKeyPressed(KEY_V)) {
+            rover.cycleCameraMode();
+        }
+        if (IsKeyPressed(KEY_R)) {
+            if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) {
+                cameraController.reset(Vector3{ 0.0f, 75.0f, 115.0f }, Vector3{ 0.0f, 0.0f, 0.0f });
+            } else if (navGraph.getStartNode()) {
+                rover.reset(physics, navGraph.getStartNode()->position);
+                rover.setPath(dijkstra.getShortestPathNodes());
+            }
+        }
+        if (IsKeyPressed(KEY_G)) {
+            if (physics.getGravity() < -6.0f) {
+                physics.setGravity(-3.71f); // Martian Gravity
+            } else {
+                physics.setGravity(-9.81f); // Earth Gravity
+            }
+        }
+
+        // Manual Driving Overrides (when Autonomous Pure Pursuit is paused)
+        if (!rover.isAutonomous()) {
+            float manualThrottle = 0.0f;
+            float manualSteer = 0.0f;
+            float manualBrake = 0.0f;
+            if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) manualThrottle += 1.0f;
+            if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) manualThrottle -= 0.6f;
+            if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) manualSteer -= 0.60f;
+            if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) manualSteer += 0.60f;
+            if (IsKeyDown(KEY_SPACE)) manualBrake = 1.0f;
+
+            rover.setThrottleInput(manualThrottle);
+            rover.setSteeringInput(manualSteer);
+            rover.setBrakeInput(manualBrake);
         }
 
         // Dijkstra Algorithm Playback & Scrubbing Keys
-        if (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_P)) {
+        if (IsKeyPressed(KEY_P)) {
             dijkstra.togglePlay();
         }
         if (IsKeyPressed(KEY_RIGHT)) {
@@ -204,6 +265,7 @@ int main() {
         }
         if (IsKeyPressed(KEY_ENTER)) {
             dijkstra.jumpToEnd();
+            rover.setPath(dijkstra.getShortestPathNodes());
         }
         if (IsKeyPressed(KEY_BACKSPACE)) {
             dijkstra.jumpToStart();
@@ -238,9 +300,6 @@ int main() {
         }
 
         // Keyboard Display Controls
-        if (IsKeyPressed(KEY_R)) {
-            cameraController.reset(Vector3{ 0.0f, 75.0f, 115.0f }, Vector3{ 0.0f, 0.0f, 0.0f });
-        }
         if (IsKeyPressed(KEY_T)) showTerrain = !showTerrain;
         if (IsKeyPressed(KEY_E)) showEdges = !showEdges;
         if (IsKeyPressed(KEY_N)) showNodes = !showNodes;
@@ -264,11 +323,11 @@ int main() {
         rlEnableDepthTest();
         rlEnableDepthMask();
 
-        // 3D Scene Rendering
-        BeginMode3D(cameraController.getCamera());
-        {
-            float sceneTime = static_cast<float>(GetTime());
+        float sceneTime = static_cast<float>(GetTime());
 
+        // 3D Scene Rendering
+        BeginMode3D(activeCamera);
+        {
             // A. Distant Martian Sun (pale blue disk with soft halo)
             DrawSphere(sunPosition, 6.0f, Color{ 190, 225, 255, 255 });
             DrawSphereWires(sunPosition, 9.0f, 6, 6, ColorAlpha(Color{ 150, 200, 255, 255 }, 0.4f));
@@ -336,14 +395,17 @@ int main() {
                 }
             }
 
-            // H. Draw Dynamic Rolling Test Spheres (Synchronized with Jolt Physics rigid bodies)
+            // H. Phase 5: Autonomous Planetary Rover Physical Rig & 3D Model
+            rover.render(sceneTime);
+
+            // I. Draw Dynamic Rolling Test Spheres (Synchronized with Jolt Physics rigid bodies)
             for (auto sphereId : physics.getDynamicSpheres()) {
                 Vector3 pos = physics.getBodyPosition(sphereId);
                 DrawSphere(pos, 1.2f, Color{ 0, 185, 255, 255 });
                 DrawSphereWires(pos, 1.2f, 8, 8, ColorAlpha(WHITE, 0.75f));
             }
 
-            // I. Highlight Hovered Node with Targeting Ring
+            // J. Highlight Hovered Node with Targeting Ring
             if (hoveredNode) {
                 DrawSphereWires(hoveredNode->position, 1.8f, 10, 10, GOLD);
                 DrawCircle3D(hoveredNode->position, 2.2f, Vector3{ 0.0f, 1.0f, 0.0f }, 90.0f, ColorAlpha(YELLOW, 0.8f));
@@ -369,7 +431,7 @@ int main() {
             DrawRectangle(hudX + 1, hudY + 1, hudW - 2, 3, Color{ 230, 95, 45, 255 }); // Martian Ochre accent
 
             DrawText("MARTIAN ROVER MISSION TELEMETRY", hudX + 16, hudY + 14, 13, RAYWHITE);
-            DrawText("Phase 4: Physics-Weighted Dijkstra & Snapshots", hudX + 16, hudY + 32, 11, Color{ 145, 175, 205, 255 });
+            DrawText("Phase 5: Autonomous Planetary Rover & Telemetry HUD", hudX + 16, hudY + 32, 11, Color{ 145, 175, 205, 255 });
 
             // FPS & Physics Sub-step Badges
             int curFPS = GetFPS();
@@ -389,8 +451,8 @@ int main() {
             DrawLine(hudX + 16, hudY + 88, hudX + hudW - 16, hudY + 88, Color{ 35, 48, 70, 255 });
 
             // Row 2: Physics & NavGraph Infrastructure Telemetry
-            DrawText(TextFormat("Jolt Engine: %d Boulders | %d Cut Edges | Martian Gravity (-3.71 m/s²)",
-                (int)physics.getBoulders().size(), blockedEdgeCount),
+            DrawText(TextFormat("Jolt Engine: %d Boulders | %d Cut Edges | Gravity: %.2f m/s²",
+                (int)physics.getBoulders().size(), blockedEdgeCount, physics.getGravity()),
                 hudX + 16, hudY + 96, 11, RAYWHITE);
 
             // Row 3: Dijkstra Navigation Solution Status
@@ -461,41 +523,48 @@ int main() {
                 hudX + 16, hudY + 290, 10, Color{ 140, 155, 175, 255 });
 
             // ----------------------------------------------------
-            // 2. TOP-RIGHT: NavGraph & Dijkstra Legend Card
+            // 2. BOTTOM-LEFT: NavGraph & Routing Legend Card
             // ----------------------------------------------------
-            int legW = 265;
-            int legH = 185;
-            int legX = screenW - legW - 16;
-            int legY = 16;
+            int legW = 440;
+            int legH = 92;
+            int legX = 16;
+            int legY = hudY + hudH + 10;
             Rectangle legRect = { (float)legX, (float)legY, (float)legW, (float)legH };
             DrawRectangleRounded(legRect, 0.05f, 4, ColorAlpha(Color{ 10, 14, 24, 255 }, 0.92f));
             DrawRectangleRoundedLines(legRect, 0.05f, 4, Color{ 48, 68, 98, 255 });
-            DrawRectangle(legX + 1, legY + 1, legW - 2, 3, Color{ 46, 204, 113, 255 }); // Emerald Green accent
+            DrawRectangle(legX + 1, legY + 1, legW - 2, 2, Color{ 46, 204, 113, 255 });
 
-            DrawText("NAVGRAPH & DIJKSTRA LEGEND", legX + 16, legY + 14, 12, RAYWHITE);
-            DrawLine(legX + 16, legY + 32, legX + legW - 16, legY + 32, Color{ 35, 48, 70, 255 });
+            DrawText("NAVGRAPH & DIJKSTRA ROUTING LEGEND", legX + 16, legY + 10, 11, RAYWHITE);
+            DrawLine(legX + 16, legY + 26, legX + legW - 16, legY + 26, Color{ 35, 48, 70, 255 });
 
-            // Legend Items
-            DrawRectangle(legX + 16, legY + 44, 16, 5, Color{ 46, 204, 113, 255 });
-            DrawText("Optimal Shortest Path Conduit", legX + 40, legY + 40, 11, Color{ 180, 255, 200, 255 });
+            // Column 1
+            DrawRectangle(legX + 16, legY + 36, 14, 4, Color{ 46, 204, 113, 255 });
+            DrawText("Shortest Path Conduit", legX + 36, legY + 32, 10, Color{ 180, 255, 200, 255 });
 
-            DrawCircle(legX + 24, legY + 68, 5, GOLD);
-            DrawText("Active Node u (Settling)", legX + 40, legY + 63, 11, GOLD);
+            DrawCircle(legX + 23, legY + 54, 4, GOLD);
+            DrawText("Active Node u (Settling)", legX + 36, legY + 49, 10, GOLD);
 
-            DrawRectangle(legX + 16, legY + 88, 16, 4, Color{ 0, 240, 255, 255 });
-            DrawText("Examining Edge (u -> v)", legX + 40, legY + 83, 11, Color{ 0, 240, 255, 255 });
+            DrawRectangle(legX + 16, legY + 70, 14, 3, Color{ 0, 240, 255, 255 });
+            DrawText("Examining Edge (u -> v)", legX + 36, legY + 65, 10, Color{ 0, 240, 255, 255 });
 
-            DrawCircle(legX + 24, legY + 110, 5, Color{ 52, 152, 219, 255 });
-            DrawText("Visited / Settled Node", legX + 40, legY + 105, 11, RAYWHITE);
+            // Column 2
+            int legCol2X = legX + 225;
+            DrawCircle(legCol2X + 7, legY + 36, 4, Color{ 52, 152, 219, 255 });
+            DrawText("Settled Node", legCol2X + 20, legY + 32, 10, RAYWHITE);
 
-            DrawRectangle(legX + 16, legY + 130, 16, 4, Color{ 240, 45, 45, 255 });
-            DrawText("Blocked by Boulder Cut", legX + 40, legY + 125, 11, Color{ 255, 120, 120, 255 });
+            DrawRectangle(legCol2X, legY + 52, 14, 3, Color{ 240, 45, 45, 255 });
+            DrawText("Blocked by Boulder Cut", legCol2X + 20, legY + 49, 10, Color{ 255, 120, 120, 255 });
 
-            DrawCircle(legX + 24, legY + 152, 5, GraphRenderer3D::getNodeColor(NodeState::START));
-            DrawText("Start Origin / End Target", legX + 40, legY + 147, 11, RAYWHITE);
+            DrawCircle(legCol2X + 7, legY + 70, 4, GraphRenderer3D::getNodeColor(NodeState::START));
+            DrawText("Start / End Beacons", legCol2X + 20, legY + 65, 10, RAYWHITE);
 
             // ----------------------------------------------------
-            // 3. BOTTOM COMMAND DECK & KEYBINDINGS BAR
+            // 3. TOP-RIGHT: Planetary Rover Flight Telemetry HUD
+            // ----------------------------------------------------
+            RoverTelemetryHUD::draw(rover, screenW, screenH, sceneTime);
+
+            // ----------------------------------------------------
+            // 4. BOTTOM COMMAND DECK & KEYBINDINGS BAR
             // ----------------------------------------------------
             int deckH = 92;
             int deckW = screenW - 32;
@@ -510,39 +579,38 @@ int main() {
 
             // --- Column 1: Camera Controls ---
             int c1X = deckX + 16;
-            DrawText("CAMERA NAVIGATION", c1X, deckY + 10, 10, Color{ 100, 185, 255, 255 });
-            DrawKeyBind(c1X, deckY + 28, "RMB Drag", "Orbit View");
-            DrawKeyBind(c1X + 130, deckY + 28, "Wheel", "Zoom");
-            DrawKeyBind(c1X, deckY + 54, "MMB / Shift+RMB", "Pan");
-            DrawKeyBind(c1X + 175, deckY + 54, "R", "Reset");
+            DrawText("CAMERA CONTROLS", c1X, deckY + 10, 10, Color{ 100, 185, 255, 255 });
+            DrawKeyBind(c1X, deckY + 28, "RMB Drag", "Orbit");
+            DrawKeyBind(c1X + 105, deckY + 28, "Wheel", "Zoom");
+            DrawKeyBind(c1X, deckY + 54, "V", "Cycle View (Orbit/Chase/Mast)");
 
-            // --- Column 2: Dijkstra Playback & Scrubbing ---
+            // --- Column 2: Rover Navigation ---
             int c2X = deckX + 16 + static_cast<int>(colW);
             DrawLine(c2X - 12, deckY + 10, c2X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
-            DrawText("DIJKSTRA REPLAY & SCRUB", c2X, deckY + 10, 10, Color{ 46, 204, 113, 255 });
-            DrawKeyBind(c2X, deckY + 28, "Space / P", dijkstra.isPlaying() ? "Pause" : "Play Replay");
-            DrawKeyBind(c2X + 130, deckY + 28, "< / >", "Step Back / Fwd");
-            DrawKeyBind(c2X, deckY + 54, "Enter", "Finish Path");
-            DrawKeyBind(c2X + 130, deckY + 54, "Bksp", "Rewind Start");
+            DrawText("ROVER NAVIGATION", c2X, deckY + 10, 10, Color{ 46, 204, 113, 255 });
+            DrawKeyBind(c2X, deckY + 28, "D", rover.isAutonomous() ? "Pause Auto" : "Auto Drive");
+            DrawKeyBind(c2X + 130, deckY + 28, "WASD", "Manual Steer");
+            DrawKeyBind(c2X, deckY + 54, "R", "Reset Rover");
+            DrawKeyBind(c2X + 130, deckY + 54, "G", (physics.getGravity() < -6.0f) ? "Grav: Earth" : "Grav: Mars");
 
-            // --- Column 3: Cost Presets & Physics ---
+            // --- Column 3: Dijkstra Algorithm ---
             int c3X = deckX + 16 + static_cast<int>(colW * 2);
             DrawLine(c3X - 12, deckY + 10, c3X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
-            DrawText("COST PRESETS & PHYSICS", c3X, deckY + 10, 10, Color{ 241, 196, 15, 255 });
-            DrawKeyBind(c3X, deckY + 28, "1-4", "Presets: Std/Direct/Energy/Tract");
-            DrawKeyBind(c3X, deckY + 54, "B", "Drop Sphere");
-            DrawKeyBind(c3X + 115, deckY + 54, "X", "Cascade");
-            DrawKeyBind(c3X + 205, deckY + 54, "C", "Clear");
+            DrawText("DIJKSTRA REPLAY & PRESETS", c3X, deckY + 10, 10, Color{ 241, 196, 15, 255 });
+            DrawKeyBind(c3X, deckY + 28, "P", dijkstra.isPlaying() ? "Pause" : "Play");
+            DrawKeyBind(c3X + 80, deckY + 28, "< / >", "Step");
+            DrawKeyBind(c3X + 165, deckY + 28, "Enter", "Finish");
+            DrawKeyBind(c3X, deckY + 54, "1-4", "Cost Presets (Std/Direct/Energy/Tract)");
 
             // --- Column 4: Display & Visual Toggles ---
             int c4X = deckX + 16 + static_cast<int>(colW * 3);
             DrawLine(c4X - 12, deckY + 10, c4X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
-            DrawText("VIEW & HUD TOGGLES", c4X, deckY + 10, 10, Color{ 190, 160, 240, 255 });
+            DrawText("TERRAIN & VIEW TOGGLES", c4X, deckY + 10, 10, Color{ 190, 160, 240, 255 });
             DrawKeyBind(c4X, deckY + 28, "T", "Terrain", showTerrain);
             DrawKeyBind(c4X + 85, deckY + 28, "E", "Edges", showEdges);
             DrawKeyBind(c4X + 165, deckY + 28, "N", "Nodes", showNodes);
-            DrawKeyBind(c4X, deckY + 54, "O", "Boulders", showBoulders);
-            DrawKeyBind(c4X + 85, deckY + 54, "W", "Wire", showWireframe);
+            DrawKeyBind(c4X, deckY + 54, "O", "Rocks", showBoulders);
+            DrawKeyBind(c4X + 85, deckY + 54, "B", "Drop Rock");
             DrawKeyBind(c4X + 165, deckY + 54, "H", "HUD", showHUD);
         } else {
             // Minimalist badge when HUD is hidden
