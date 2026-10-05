@@ -46,6 +46,7 @@ public:
     void setBodyTransform(JPH::BodyID id, Vector3 pos, Quaternion rot);
     Vector3 getBodyLinearVelocity(JPH::BodyID id) const;
     void setBodyLinearVelocity(JPH::BodyID id, Vector3 vel);
+    Vector3 getBodyAngularVelocity(JPH::BodyID id) const;
     void setBodyAngularVelocity(JPH::BodyID id, Vector3 angVel);
     Vector3 getPointVelocity(JPH::BodyID id, Vector3 worldPos) const;
     void setGravity(float g);

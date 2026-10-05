@@ -422,6 +422,13 @@ void PhysicsWorld::setBodyLinearVelocity(JPH::BodyID id, Vector3 vel) {
     bodyInterface.SetLinearVelocity(id, JPH::Vec3(vel.x, vel.y, vel.z));
 }
 
+Vector3 PhysicsWorld::getBodyAngularVelocity(JPH::BodyID id) const {
+    if (id.IsInvalid() || !m_initialized) return Vector3{ 0, 0, 0 };
+    const JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    JPH::Vec3 w = bodyInterface.GetAngularVelocity(id);
+    return Vector3{ w.GetX(), w.GetY(), w.GetZ() };
+}
+
 void PhysicsWorld::setBodyAngularVelocity(JPH::BodyID id, Vector3 angVel) {
     if (id.IsInvalid() || !m_initialized) return;
     JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();

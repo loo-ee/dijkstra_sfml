@@ -23,12 +23,12 @@ PlanetaryRover::PlanetaryRover()
     , m_odometerMeters(0.0f)
     , m_batteryJoules(0.0f)
     , m_currentPowerWatts(0.0f)
-    , m_suspensionRestLength(0.45f)
-    , m_springStiffness(36000.0f)
-    , m_springDamping(3600.0f)
-    , m_wheelRadius(0.45f)
+    , m_suspensionRestLength(0.48f)
+    , m_springStiffness(7500.0f)
+    , m_springDamping(1800.0f)
+    , m_wheelRadius(0.40f)
     , m_wheelWidth(0.35f)
-    , m_antiRollBarStiffness(7500.0f)
+    , m_antiRollBarStiffness(4000.0f)
     , m_throttleInput(0.0f)
     , m_steerInput(0.0f)
     , m_brakeInput(0.0f)
@@ -85,7 +85,7 @@ void PlanetaryRover::reset(PhysicsWorld& physics, Vector3 spawnPos, float yawAng
 
     // Spawn slightly elevated so wheels cleanly drop onto suspension
     Vector3 elevatedPos = spawnPos;
-    elevatedPos.y += 0.85f;
+    elevatedPos.y += 0.40f;
 
     m_chassisBodyId = physics.createChassisBody(elevatedPos, m_halfExtents, m_mass);
     Quaternion initRot = QuaternionFromAxisAngle(Vector3{ 0, 1, 0 }, yawAngleRad);
@@ -363,7 +363,7 @@ void PlanetaryRover::updatePurePursuit(float dt) {
 }
 
 void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
-    const float maxRayDist = m_suspensionRestLength + m_wheelRadius;
+    const float maxRayDist = m_suspensionRestLength + m_wheelRadius + 0.35f;
     m_tcsEngagedOverall = false;
 
     // Apply front steering angles
@@ -396,8 +396,9 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
             w.contactPoint  = hitPoint;
             w.contactNormal = hitNormal;
 
-            // Wheel hub sits at radius R above ground along contact normal/suspension axis
-            w.suspensionLength = hitDist - m_wheelRadius;
+            // Distance along suspension ray to place wheel hub so tire contacts ground
+            float desiredHubDist = hitDist - m_wheelRadius;
+            w.suspensionLength = Clamp(desiredHubDist, 0.10f, m_suspensionRestLength + 0.25f);
             w.suspensionCompression = Clamp(m_suspensionRestLength - w.suspensionLength, 0.0f, m_suspensionRestLength);
             w.worldWheelPos = Vector3Add(w.worldMountPos, Vector3Scale(rayDir, w.suspensionLength));
 
@@ -407,7 +408,7 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
             float vRel = Vector3DotProduct(mountVel, rayDir); // positive when compressing
 
             float springForceMag = (m_springStiffness * w.suspensionCompression) + (m_springDamping * vRel);
-            springForceMag = Clamp(springForceMag, 0.0f, 28000.0f);
+            springForceMag = Clamp(springForceMag, 0.0f, 16000.0f);
 
             // Apply suspension upward force to chassis
             Vector3 suspForce = Vector3Scale(m_up, springForceMag);
@@ -474,10 +475,10 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
             // Power calculation: P = F * v
             totalWorkRate += fabsf(driveForceMag * vLong);
         } else {
-            // In the air (unloaded)
-            w.suspensionLength = m_suspensionRestLength;
+            // In the air (unloaded - reaches downward to seek terrain)
+            w.suspensionLength = m_suspensionRestLength + 0.15f;
             w.suspensionCompression = 0.0f;
-            w.worldWheelPos = Vector3Add(w.worldMountPos, Vector3Scale(rayDir, m_suspensionRestLength));
+            w.worldWheelPos = Vector3Add(w.worldMountPos, Vector3Scale(rayDir, w.suspensionLength));
             w.contactPoint  = w.worldWheelPos;
             w.slipRatio = 0.0f;
             w.angularVelocity = Lerp(w.angularVelocity, 0.0f, 0.05f);
@@ -496,27 +497,22 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
     physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, -arbForceR), m_wheels[2].worldMountPos);
     physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, +arbForceR), m_wheels[3].worldMountPos);
 
-    // Step 3: Active Electronic Stability Program (ESP) & Dynamic Gyroscopic Leveling
+    // Step 3: Active Electronic Stability Program (ESP)
+    // Damp excessive roll rate if bouncing, without fighting natural terrain slope
     m_espActive = false;
-    Vector3 worldUp = Vector3{ 0.0f, 1.0f, 0.0f };
-    Vector3 tiltCross = Vector3CrossProduct(m_up, worldUp);
-    float tiltCrossLen = Vector3Length(tiltCross);
-
-    // If tilted (> 6 deg) or under high roll/pitch oscillation:
-    if (tiltCrossLen > 0.10f) {
-        Vector3 tiltAxis = Vector3Normalize(tiltCross);
-        // Corrective stabilizing torque directly counteracting tipping
-        float stabTorqueMag = m_mass * 18.0f * tiltCrossLen;
-        physics.applyTorque(m_chassisBodyId, Vector3Scale(tiltAxis, stabTorqueMag));
+    Vector3 angVel = physics.getBodyAngularVelocity(m_chassisBodyId);
+    float angSpeed = Vector3Length(angVel);
+    if (angSpeed > 1.4f) {
+        Vector3 dampTorque = Vector3Scale(angVel, -m_mass * 1.8f);
+        physics.applyTorque(m_chassisBodyId, dampTorque);
         m_espActive = true;
     }
 
-    // Step 4: Automatic Inverted Recovery / Self-Righting Assist
-    // If the rover has rolled past 65 deg (or inverted on its back), smoothly right it
-    if (m_up.y < 0.25f) {
+    // Step 4: Rollover Recovery (ONLY if completely flipped upside down)
+    if (m_up.y < -0.30f) {
+        Vector3 worldUp = Vector3{ 0.0f, 1.0f, 0.0f };
         Vector3 rightingTorque = Vector3CrossProduct(m_up, worldUp);
-        physics.applyTorque(m_chassisBodyId, Vector3Scale(Vector3Normalize(rightingTorque), m_mass * 40.0f));
-        physics.applyForceAtPosition(m_chassisBodyId, Vector3{ 0.0f, m_mass * 16.0f, 0.0f }, m_position);
+        physics.applyTorque(m_chassisBodyId, Vector3Scale(Vector3Normalize(rightingTorque), m_mass * 25.0f));
         m_espActive = true;
     }
 
@@ -536,7 +532,7 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
 void PlanetaryRover::selfRight(PhysicsWorld& physics) {
     if (m_chassisBodyId.IsInvalid()) return;
     Vector3 currentPos = m_position;
-    currentPos.y += 1.2f;
+    currentPos.y += 0.40f;
     float currentYaw = m_yawDeg * DEG2RAD;
     Quaternion uprightRot = QuaternionFromAxisAngle(Vector3{ 0, 1, 0 }, currentYaw);
     physics.setBodyTransform(m_chassisBodyId, currentPos, uprightRot);
