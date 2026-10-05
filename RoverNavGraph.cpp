@@ -37,7 +37,7 @@ void RoverNavGraph::generateCenteredGrid(const TerrainHeightfield& terrain, Vect
 
     float offsetX = (gridCols - 1) * spacing * 0.5f;
     float offsetZ = (gridRows - 1) * spacing * 0.5f;
-    const float maxNavRadius = 82.0f; // Constrain graph to circular radar disc
+    const float maxNavRadius = 185.0f; // Wide planetary navigation radar disc
 
     std::vector<Vertex3D*> grid(gridCols * gridRows, nullptr);
     m_vertices.reserve(gridCols * gridRows);

@@ -123,20 +123,41 @@ static void ApplyTerrainPreset(
         };
     }
 
-    if (!infiniteWorldMode) {
-        for (const auto& bp : boulders) {
-            float h = terrain.getHeight(bp.pos.x, bp.pos.y);
-            Vector3 boulderPos = { bp.pos.x, h + bp.radius * 0.70f, bp.pos.y };
-            physics.spawnBoulder(boulderPos, bp.radius);
+    // Spawn preset landmark boulders
+    for (const auto& bp : boulders) {
+        float h = terrain.getHeight(bp.pos.x, bp.pos.y);
+        Vector3 boulderPos = { bp.pos.x, h + bp.radius * 0.70f, bp.pos.y };
+        physics.spawnBoulder(boulderPos, bp.radius);
+    }
+
+    // Procedural Planetary Rock Fields (Spanning radius up to 400m across the planetary surface)
+    uint32_t seed = 42 + static_cast<uint32_t>(preset) * 1337;
+    auto pseudoRand = [&seed]() {
+        seed = seed * 1664525u + 1013904223u;
+        return static_cast<float>(seed & 0xFFFF) / 65535.0f;
+    };
+
+    const int numProceduralBoulders = 80;
+    for (int i = 0; i < numProceduralBoulders; ++i) {
+        float angle = pseudoRand() * 2.0f * PI;
+        float dist = 22.0f + sqrtf(pseudoRand()) * 360.0f;
+        float bx = dist * cosf(angle);
+        float bz = dist * sinf(angle);
+
+        // Don't spawn rocks directly on top of the rover start point
+        if (sqrtf(bx * bx + bz * bz) < 14.0f) continue;
+
+        float slope = terrain.getSlopeAngleRad(bx, bz);
+        if (slope < 22.0f * DEG2RAD) {
+            float radius = 1.6f + pseudoRand() * 2.6f; // Radii from 1.6m to 4.2m
+            float by = terrain.getHeight(bx, bz);
+            Vector3 bPos = { bx, by + radius * 0.70f, bz };
+            physics.spawnBoulder(bPos, radius);
         }
     }
 
-    // Drape 3D NavGraph (26x26 = 676 nodes)
-    if (infiniteWorldMode) {
-        navGraph.generateCenteredGrid(terrain, Vector3{ 0.0f, 0.0f, 0.0f }, 26, 26, 7.0f);
-    } else {
-        navGraph.generateTerrainGrid(terrain, 26, 26, 7.0f);
-    }
+    // Drape 3D NavGraph across the Planetary Surface (46x46 = 2,116 grid cells, 360m diameter circular radar web)
+    navGraph.generateCenteredGrid(terrain, Vector3{ 0.0f, 0.0f, 0.0f }, 46, 46, 8.0f);
     navGraph.validateEdgesWithPhysics(physics, 0.6f);
 
     blockedEdgeCount = 0;
@@ -233,10 +254,10 @@ int main() {
         if (infiniteWorldMode) {
             chunkMgr.update(rover.getPosition(), terrain, physics);
 
-            // Dynamic sliding NavGraph: if rover travels > 28m away from graph center, re-center NavGraph!
-            if (Vector3Distance(rover.getPosition(), lastNavGraphCenter) > 28.0f) {
+            // Dynamic sliding NavGraph: if rover travels > 40m away from graph center, re-center NavGraph!
+            if (Vector3Distance(rover.getPosition(), lastNavGraphCenter) > 40.0f) {
                 lastNavGraphCenter = rover.getPosition();
-                navGraph.generateCenteredGrid(terrain, lastNavGraphCenter, 26, 26, 7.0f);
+                navGraph.generateCenteredGrid(terrain, lastNavGraphCenter, 46, 46, 8.0f);
                 navGraph.validateEdgesWithPhysics(physics, 0.6f);
                 blockedEdgeCount = 0;
                 for (const auto& e : navGraph.getEdges()) {
@@ -567,8 +588,9 @@ int main() {
                     }
 
                     if (v->state == NodeState::IMPASSABLE) {
-                        // Subtle hazard pip on impassable rock/slope
-                        DrawSphere(v->position, 0.45f, Color{ 85, 45, 45, 180 });
+                        // Prominent Hazard Node on steep slopes / cliffs / boulder hazards
+                        DrawSphere(v->position, 0.70f, Color{ 235, 65, 50, 220 });
+                        DrawSphereWires(v->position, 0.90f, 4, 4, ColorAlpha(RED, 0.50f));
                         continue;
                     }
 
