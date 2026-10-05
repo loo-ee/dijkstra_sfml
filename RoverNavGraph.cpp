@@ -17,6 +17,7 @@ void RoverNavGraph::clear() {
     }
     m_vertices.clear();
     m_edges.clear();
+    m_blockedEdgesMap.clear();
     m_startNode = nullptr;
     m_endNode = nullptr;
     m_gridCols = 0;
@@ -92,7 +93,7 @@ void RoverNavGraph::generateTerrainGrid(const TerrainHeightfield& terrain, int g
                         } else {
                             edgeColor = Color{ 90, 115, 145, 190 }; // Walkable nav route
                         }
-                        m_edges.push_back({ u->position, v->position, edgeColor });
+                        m_edges.push_back({ u->position, v->position, edgeColor, false, u->name, v->name });
                     }
                 }
             }
@@ -264,6 +265,7 @@ void RoverNavGraph::renderEdges() const {
 
 void RoverNavGraph::validateEdgesWithPhysics(PhysicsWorld& physics, float clearanceOffset) {
     Vector3 upOffset = { 0.0f, clearanceOffset, 0.0f };
+    m_blockedEdgesMap.clear();
 
     for (auto& edge : m_edges) {
         Vector3 from = Vector3Add(edge.start, upOffset);
@@ -273,6 +275,10 @@ void RoverNavGraph::validateEdgesWithPhysics(PhysicsWorld& physics, float cleara
         if (physics.raycast(from, to, &hitPoint)) {
             edge.isBlocked = true;
             edge.color = Color{ 220, 45, 45, 230 }; // Impassable collision obstruction
+            std::string key = (edge.startNode < edge.endNode) ? 
+                              (edge.startNode + "_" + edge.endNode) : 
+                              (edge.endNode + "_" + edge.startNode);
+            m_blockedEdgesMap[key] = true;
         }
     }
 

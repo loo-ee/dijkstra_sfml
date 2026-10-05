@@ -2,6 +2,7 @@
 #include <vector>
 #include <string>
 #include <utility>
+#include <unordered_map>
 #include <raylib.h>
 #include "Vertex3D.h"
 #include "TerrainHeightfield.h"
@@ -13,6 +14,8 @@ struct GraphEdge3D {
     Vector3 end;
     Color color;
     bool isBlocked = false;
+    std::string startNode;
+    std::string endNode;
 };
 
 class RoverNavGraph {
@@ -40,6 +43,7 @@ public:
 
     const std::vector<Vertex3D*>& getVertices() const { return m_vertices; }
     const std::vector<GraphEdge3D>& getEdges() const { return m_edges; }
+    const std::unordered_map<std::string, bool>& getBlockedEdgesMap() const { return m_blockedEdgesMap; }
     Vertex3D* getStartNode() const { return m_startNode; }
     Vertex3D* getEndNode() const { return m_endNode; }
 
@@ -50,6 +54,7 @@ public:
 private:
     std::vector<Vertex3D*> m_vertices;
     std::vector<GraphEdge3D> m_edges;
+    std::unordered_map<std::string, bool> m_blockedEdgesMap;
     Vertex3D* m_startNode = nullptr;
     Vertex3D* m_endNode = nullptr;
 
