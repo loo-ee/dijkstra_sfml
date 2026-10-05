@@ -30,6 +30,7 @@ public:
     void clear();
     void generateTerrainGrid(const TerrainHeightfield& terrain, int gridCols, int gridRows, float spacing);
     void generateCenteredGrid(const TerrainHeightfield& terrain, Vector3 centerPos, int gridCols, int gridRows, float spacing);
+    void generatePersistentPlanetaryGrid(const TerrainHeightfield& terrain, Vector3 centerPos, float radius = 650.0f, float spacing = 16.0f);
     void validateEdgesWithPhysics(PhysicsWorld& physics, float clearanceOffset = 0.6f);
     
     Vertex3D* getClosestNode(Vector3 worldPos);
@@ -56,7 +57,12 @@ public:
     float getSpacing() const { return m_spacing; }
 
 private:
+    static inline int64_t getCellKey(int gx, int gz) {
+        return (static_cast<int64_t>(gx) << 32) | (static_cast<int64_t>(gz) & 0xFFFFFFFF);
+    }
+
     std::vector<Vertex3D*> m_vertices;
+    std::unordered_map<int64_t, Vertex3D*> m_spatialNodes;
     std::vector<GraphEdge3D> m_edges;
     std::unordered_map<std::string, bool> m_blockedEdgesMap;
     Vertex3D* m_startNode = nullptr;

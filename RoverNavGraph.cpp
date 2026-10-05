@@ -16,6 +16,7 @@ void RoverNavGraph::clear() {
         delete v;
     }
     m_vertices.clear();
+    m_spatialNodes.clear();
     m_edges.clear();
     m_blockedEdgesMap.clear();
     m_startNode = nullptr;
@@ -30,34 +31,45 @@ void RoverNavGraph::generateTerrainGrid(const TerrainHeightfield& terrain, int g
 
 void RoverNavGraph::generateCenteredGrid(const TerrainHeightfield& terrain, Vector3 centerPos, int gridCols, int gridRows, float spacing) {
     clear();
-
     m_gridCols = gridCols;
     m_gridRows = gridRows;
     m_spacing = spacing;
+    float radius = (std::max(gridCols, gridRows) * spacing) * 0.5f;
+    if (radius < 640.0f) radius = 640.0f; // Ensure full globe surface coverage!
+    generatePersistentPlanetaryGrid(terrain, centerPos, radius, spacing);
+}
 
-    float offsetX = (gridCols - 1) * spacing * 0.5f;
-    float offsetZ = (gridRows - 1) * spacing * 0.5f;
-    const float maxNavRadius = 185.0f; // Wide planetary navigation radar disc
+void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& terrain, Vector3 centerPos, float radius, float spacing) {
+    m_spacing = spacing;
 
-    std::vector<Vertex3D*> grid(gridCols * gridRows, nullptr);
-    m_vertices.reserve(gridCols * gridRows);
+    int minGx = static_cast<int>(floorf((centerPos.x - radius) / spacing));
+    int maxGx = static_cast<int>(ceilf((centerPos.x + radius) / spacing));
+    int minGz = static_cast<int>(floorf((centerPos.z - radius) / spacing));
+    int maxGz = static_cast<int>(ceilf((centerPos.z + radius) / spacing));
 
-    // 1. Create Nodes Draped over Terrain (+0.35m elevation offset to prevent z-fighting)
-    for (int r = 0; r < gridRows; ++r) {
-        for (int c = 0; c < gridCols; ++c) {
-            float relX = c * spacing - offsetX;
-            float relZ = r * spacing - offsetZ;
-            float distFromCenter = sqrtf(relX * relX + relZ * relZ);
+    float radiusSq = radius * radius;
+    std::vector<Vertex3D*> newNodes;
+    newNodes.reserve(2048);
 
-            if (distFromCenter > maxNavRadius) {
-                continue; // Exclude nodes outside circular navigation boundary
+    // 1. Create Nodes Draped over Terrain for any unvisited cells within planetary radius
+    for (int gz = minGz; gz <= maxGz; ++gz) {
+        for (int gx = minGx; gx <= maxGx; ++gx) {
+            float worldX = gx * spacing;
+            float worldZ = gz * spacing;
+
+            float dx = worldX - centerPos.x;
+            float dz = worldZ - centerPos.z;
+            if (dx * dx + dz * dz > radiusSq) {
+                continue;
             }
 
-            float worldX = centerPos.x + relX;
-            float worldZ = centerPos.z + relZ;
-            float worldY = terrain.getHeight(worldX, worldZ) + 0.35f;
+            int64_t key = getCellKey(gx, gz);
+            if (m_spatialNodes.find(key) != m_spatialNodes.end()) {
+                continue; // Node already exists in persistent memory! Preserved!
+            }
 
-            std::string name = "N_" + std::to_string(c) + "_" + std::to_string(r);
+            float worldY = terrain.getHeight(worldX, worldZ) + 0.35f;
+            std::string name = "N_" + std::to_string(gx) + "_" + std::to_string(gz);
             Vertex3D* node = new Vertex3D(name, Vector3{ worldX, worldY, worldZ });
 
             // Slope angle and traversability properties
@@ -73,112 +85,95 @@ void RoverNavGraph::generateCenteredGrid(const TerrainHeightfield& terrain, Vect
                 node->state = NodeState::DEFAULT;
             }
 
-            grid[r * gridCols + c] = node;
+            m_spatialNodes[key] = node;
             m_vertices.push_back(node);
+            newNodes.push_back(node);
         }
     }
 
-    auto getIndex = [gridCols](int c, int r) {
-        return r * gridCols + c;
-    };
+    if (newNodes.empty() && !m_edges.empty()) {
+        return; // All nodes already generated, nothing new to connect
+    }
 
-    const int dc[] = { 1, -1, 0,  0, 1, -1,  1, -1 };
-    const int dr[] = { 0,  0, 1, -1, 1,  1, -1, -1 };
+    // 2. Connect Newly Generated Nodes to 8-Neighborhood (Cardinals + Diagonals)
+    const int dgx[] = { 1, -1, 0,  0, 1, -1,  1, -1 };
+    const int dgz[] = { 0,  0, 1, -1, 1,  1, -1, -1 };
 
-    // 1b. Cliff & Steep Drop-Off Proximity Buffer (Safety Standoff Margin)
-    for (int r = 0; r < gridRows; ++r) {
-        for (int c = 0; c < gridCols; ++c) {
-            Vertex3D* u = grid[getIndex(c, r)];
-            if (!u || !u->isWalkable) {
-                if (u) u->cliffProximity = 1.0f;
-                continue;
-            }
-            float maxAdjSlope = u->slopeAngleRad;
-            bool nextToCliff = false;
-            for (int i = 0; i < 8; ++i) {
-                int nc = c + dc[i];
-                int nr = r + dr[i];
-                if (nc >= 0 && nc < gridCols && nr >= 0 && nr < gridRows) {
-                    Vertex3D* v = grid[getIndex(nc, nr)];
-                    if (!v) continue;
-                    if (!v->isWalkable || v->slopeAngleRad > 18.0f * DEG2RAD) {
-                        nextToCliff = true;
-                    }
-                    if (v->slopeAngleRad > maxAdjSlope) {
-                        maxAdjSlope = v->slopeAngleRad;
-                    }
+    for (Vertex3D* u : newNodes) {
+        int gx = static_cast<int>(roundf(u->position.x / spacing));
+        int gz = static_cast<int>(roundf(u->position.z / spacing));
+
+        float maxAdjSlope = u->slopeAngleRad;
+        bool nextToCliff = false;
+
+        for (int i = 0; i < 8; ++i) {
+            int ngx = gx + dgx[i];
+            int ngz = gz + dgz[i];
+            int64_t nKey = getCellKey(ngx, ngz);
+
+            auto it = m_spatialNodes.find(nKey);
+            if (it != m_spatialNodes.end()) {
+                Vertex3D* v = it->second;
+                if (!v->isWalkable || v->slopeAngleRad > 18.0f * DEG2RAD) {
+                    nextToCliff = true;
                 }
-            }
-            if (nextToCliff) {
-                u->cliffProximity = 0.85f;
-            } else if (maxAdjSlope > 14.0f * DEG2RAD) {
-                u->cliffProximity = 0.40f;
-            }
-        }
-    }
+                if (v->slopeAngleRad > maxAdjSlope) {
+                    maxAdjSlope = v->slopeAngleRad;
+                }
 
-    // 2. Connect 8-Neighborhood (Cardinals + Diagonals)
-    for (int r = 0; r < gridRows; ++r) {
-        for (int c = 0; c < gridCols; ++c) {
-            Vertex3D* u = grid[getIndex(c, r)];
-            if (!u) continue;
+                // Add bidirectional edge
+                float dist = Vector3Distance(u->position, v->position);
+                u->neighbors.emplace_back(v->name, dist);
+                v->neighbors.emplace_back(u->name, dist);
 
-            for (int i = 0; i < 8; ++i) {
-                int nc = c + dc[i];
-                int nr = r + dr[i];
-
-                if (nc >= 0 && nc < gridCols && nr >= 0 && nr < gridRows) {
-                    Vertex3D* v = grid[getIndex(nc, nr)];
-                    if (!v) continue;
-
-                    float dist = Vector3Distance(u->position, v->position);
-                    u->neighbors.emplace_back(v->name, dist);
-
-                    // Add unique undirected edge to rendering list
-                    if (u < v) {
-                        bool steep = (!u->isWalkable || !v->isWalkable);
-                        Color edgeColor = steep ? Color{ 180, 40, 40, 75 } : Color{ 60, 205, 255, 175 };
-                        m_edges.push_back({ u->position, v->position, edgeColor, steep, u->name, v->name });
-                        if (steep) {
-                            std::string key = (u->name < v->name) ? (u->name + "_" + v->name) : (v->name + "_" + u->name);
-                            m_blockedEdgesMap[key] = true;
-                        }
-                    }
+                // Add unique undirected edge to rendering list
+                bool steep = (!u->isWalkable || !v->isWalkable);
+                Color edgeColor = steep ? Color{ 180, 40, 40, 75 } : Color{ 60, 205, 255, 175 };
+                m_edges.push_back({ u->position, v->position, edgeColor, steep, u->name, v->name });
+                if (steep) {
+                    std::string key = (u->name < v->name) ? (u->name + "_" + v->name) : (v->name + "_" + u->name);
+                    m_blockedEdgesMap[key] = true;
                 }
             }
         }
+
+        if (nextToCliff) {
+            u->cliffProximity = 0.85f;
+        } else if (maxAdjSlope > 14.0f * DEG2RAD) {
+            u->cliffProximity = 0.40f;
+        }
     }
 
-    // Set Default Start and End Nodes (nearest strictly walkable nodes to corners)
-    Vertex3D* bestStart = nullptr;
-    Vertex3D* bestEnd = nullptr;
-    float bestStartDist = 1e9f;
-    float bestEndDist = 1e9f;
-
-    if (!m_vertices.empty()) {
-        Vector3 targetStart = m_vertices.front()->position;
-        Vector3 targetEnd   = m_vertices.back()->position;
-
+    // Set Default Start and End Nodes near center of exploration if not yet set
+    if (!m_startNode && !m_vertices.empty()) {
+        Vector3 preferredStart = Vector3Add(centerPos, Vector3{ -25.0f, 0.0f, -20.0f });
+        Vertex3D* bestStart = nullptr;
+        float bestDist = 1e9f;
         for (Vertex3D* v : m_vertices) {
             if (v->isWalkable) {
-                float dStart = Vector3Distance(v->position, targetStart);
-                if (dStart < bestStartDist) {
-                    bestStartDist = dStart;
+                float d = Vector3Distance(v->position, preferredStart);
+                if (d < bestDist) {
+                    bestDist = d;
                     bestStart = v;
                 }
-                float dEnd = Vector3Distance(v->position, targetEnd);
-                if (dEnd < bestEndDist) {
-                    bestEndDist = dEnd;
+            }
+        }
+        if (bestStart) setStartNode(bestStart);
+    }
+    if (!m_endNode && m_vertices.size() > 1) {
+        Vector3 preferredEnd = Vector3Add(centerPos, Vector3{ 38.0f, 0.0f, 32.0f });
+        Vertex3D* bestEnd = nullptr;
+        float bestDist = 1e9f;
+        for (Vertex3D* v : m_vertices) {
+            if (v->isWalkable && v != m_startNode) {
+                float d = Vector3Distance(v->position, preferredEnd);
+                if (d < bestDist) {
+                    bestDist = d;
                     bestEnd = v;
                 }
             }
         }
-
-        if (bestStart) setStartNode(bestStart);
-        else setStartNode(m_vertices.front());
-
-        if (bestEnd && bestEnd != bestStart) setEndNode(bestEnd);
-        else setEndNode(m_vertices.back());
+        if (bestEnd) setEndNode(bestEnd);
     }
 
     buildEdgeMeshes();

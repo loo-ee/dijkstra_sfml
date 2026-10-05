@@ -38,6 +38,11 @@ static int DrawKeyBind(int x, int y, const char* key, const char* label, bool ac
     return (keyW + padX * 2 + 5 + MeasureText(label, 11));
 }
 
+static const TerrainHeightfield* s_activeTerrain = nullptr;
+static float SampleActiveTerrainHeight(float x, float z) {
+    return s_activeTerrain ? s_activeTerrain->getHeight(x, z) : 0.0f;
+}
+
 // Helper: Load/Switch Terrain Mode Presets with customized physical landscapes & obstacles
 static void ApplyTerrainPreset(
     TerrainPreset preset,
@@ -50,6 +55,7 @@ static void ApplyTerrainPreset(
     PlanetaryRover& rover,
     int& blockedEdgeCount
 ) {
+    s_activeTerrain = &terrain;
     terrain.setPreset(preset);
     terrain.generate();
 
@@ -130,17 +136,17 @@ static void ApplyTerrainPreset(
         physics.spawnBoulder(boulderPos, bp.radius);
     }
 
-    // Procedural Planetary Rock Fields (Spanning radius up to 400m across the planetary surface)
+    // Procedural Planetary Rock Fields (Spanning radius up to 620m across the entire planetary surface)
     uint32_t seed = 42 + static_cast<uint32_t>(preset) * 1337;
     auto pseudoRand = [&seed]() {
         seed = seed * 1664525u + 1013904223u;
         return static_cast<float>(seed & 0xFFFF) / 65535.0f;
     };
 
-    const int numProceduralBoulders = 80;
+    const int numProceduralBoulders = 140;
     for (int i = 0; i < numProceduralBoulders; ++i) {
         float angle = pseudoRand() * 2.0f * PI;
-        float dist = 22.0f + sqrtf(pseudoRand()) * 360.0f;
+        float dist = 20.0f + sqrtf(pseudoRand()) * 600.0f;
         float bx = dist * cosf(angle);
         float bz = dist * sinf(angle);
 
@@ -156,8 +162,8 @@ static void ApplyTerrainPreset(
         }
     }
 
-    // Drape 3D NavGraph across the Planetary Surface (46x46 = 2,116 grid cells, 360m diameter circular radar web)
-    navGraph.generateCenteredGrid(terrain, Vector3{ 0.0f, 0.0f, 0.0f }, 46, 46, 8.0f);
+    // Drape 3D NavGraph across the ENTIRE Planetary Surface (Radius 640m, covering the whole globe!)
+    navGraph.generatePersistentPlanetaryGrid(terrain, Vector3{ 0.0f, 0.0f, 0.0f }, 640.0f, 16.0f);
     navGraph.validateEdgesWithPhysics(physics, 0.6f);
 
     blockedEdgeCount = 0;
@@ -250,24 +256,18 @@ int main() {
         // Update Autonomous Planetary Rover & Pure Pursuit Navigation
         rover.update(physics, dt);
 
-        // Infinite World Streaming & Dynamic Sliding NavGraph
-        if (infiniteWorldMode) {
-            chunkMgr.update(rover.getPosition(), terrain, physics);
+        // Dynamic Persistent Planetary Expansion:
+        // As camera or rover moves, dynamically generate more nodes and area in the process
+        // while preserving existing nodes and terrain so the user can always return!
+        Vector3 explorationCenter = (rover.getCameraMode() == RoverCameraMode::ORBIT)
+                                    ? cameraController.getCamera().target
+                                    : rover.getPosition();
 
-            // Dynamic sliding NavGraph: if rover travels > 40m away from graph center, re-center NavGraph!
-            if (Vector3Distance(rover.getPosition(), lastNavGraphCenter) > 40.0f) {
-                lastNavGraphCenter = rover.getPosition();
-                navGraph.generateCenteredGrid(terrain, lastNavGraphCenter, 46, 46, 8.0f);
-                navGraph.validateEdgesWithPhysics(physics, 0.6f);
-                blockedEdgeCount = 0;
-                for (const auto& e : navGraph.getEdges()) {
-                    if (e.isBlocked) blockedEdgeCount++;
-                }
-                Vertex3D* roverNode = navGraph.getClosestWalkableNode(rover.getPosition());
-                if (roverNode) navGraph.setStartNode(roverNode);
-                dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(),
-                                          navGraph.getVertices(), navGraph.getBlockedEdgesMap());
-                rover.setPath(dijkstra.getShortestPathNodes());
+        if (Vector3Distance(explorationCenter, lastNavGraphCenter) > 35.0f) {
+            lastNavGraphCenter = explorationCenter;
+            navGraph.generatePersistentPlanetaryGrid(terrain, lastNavGraphCenter, 640.0f, 16.0f);
+            if (infiniteWorldMode) {
+                chunkMgr.update(lastNavGraphCenter, terrain, physics);
             }
         }
 
@@ -328,14 +328,6 @@ int main() {
             }
         }
 
-        // Update Orbital Camera (only when in Orbit mode, ignoring inputs over UI cards)
-        if (rover.getCameraMode() == RoverCameraMode::ORBIT) {
-            cameraController.update(isOverUI);
-        }
-
-        // Update Dijkstra Step-by-Step Playback
-        dijkstra.update(dt);
-
         // 3D Raycast Mouse Picking for Nodes (prevent picking if clicking on UI cards)
         Vertex3D* hoveredNode = nullptr;
         if (!isOverUI) {
@@ -355,6 +347,30 @@ int main() {
                 }
             }
         }
+
+        // Track Left-drag for globe surface rotation (when dragging across terrain, not clicking a node)
+        static Vector2 leftClickStart = { 0.0f, 0.0f };
+        static bool isLeftDragging = false;
+
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            leftClickStart = mousePos;
+            isLeftDragging = false;
+        } else if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            float dragDist = Vector2Distance(mousePos, leftClickStart);
+            if (dragDist > 4.0f && !hoveredNode && !isOverUI) {
+                isLeftDragging = true;
+            }
+        } else if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+            isLeftDragging = false;
+        }
+
+        // Update Orbital Camera with Globe Surface Rotation (anchored to physical planetary sphere)
+        if (rover.getCameraMode() == RoverCameraMode::ORBIT) {
+            cameraController.update(isOverUI, SampleActiveTerrainHeight, isLeftDragging);
+        }
+
+        // Update Dijkstra Step-by-Step Playback
+        dijkstra.update(dt);
 
         // Cost Preset Selection Keys: 1, 2, 3, 4
         if (IsKeyPressed(KEY_ONE)) {
@@ -580,25 +596,32 @@ int main() {
             // F. Phase 4: Draw Brilliant Glowing Emerald Shortest Path along Terrain Surface
             GraphRenderer3D::drawShortestPath(dijkstra.getShortestPathNodes(), sceneTime);
 
-            // G. Draw Draped NavGraph Nodes (Prominent Glowing 3D Spheres with Halos & Anchors)
+            // G. Draw Draped NavGraph Nodes (Prominent Glowing 3D Spheres with Distance LOD)
             if (showNodes) {
+                Vector3 camPos = activeCamera.position;
                 for (const Vertex3D* v : navGraph.getVertices()) {
                     if (v == navGraph.getStartNode() || v == navGraph.getEndNode()) {
                         continue; // Drawn prominently below
                     }
 
+                    float distToCam = Vector3Distance(camPos, v->position);
+
                     if (v->state == NodeState::IMPASSABLE) {
                         // Prominent Hazard Node on steep slopes / cliffs / boulder hazards
                         DrawSphere(v->position, 0.70f, Color{ 235, 65, 50, 220 });
-                        DrawSphereWires(v->position, 0.90f, 4, 4, ColorAlpha(RED, 0.50f));
+                        if (distToCam < 260.0f) {
+                            DrawSphereWires(v->position, 0.90f, 4, 4, ColorAlpha(RED, 0.50f));
+                        }
                         continue;
                     }
 
                     Color nodeCol = GraphRenderer3D::getNodeColor(v->state);
-                    float r = 0.95f; // Prominently visible from panoramic orbit camera!
+                    float r = 0.90f; // Prominently visible from panoramic orbit camera!
                     DrawSphere(v->position, r, nodeCol);
-                    DrawSphereWires(v->position, r * 1.25f, 6, 6, ColorAlpha(nodeCol, 0.60f));
-                    DrawLine3D(v->position, Vector3{ v->position.x, v->position.y - 0.5f, v->position.z }, ColorAlpha(nodeCol, 0.8f));
+                    if (distToCam < 260.0f) {
+                        DrawSphereWires(v->position, r * 1.25f, 6, 6, ColorAlpha(nodeCol, 0.60f));
+                        DrawLine3D(v->position, Vector3{ v->position.x, v->position.y - 0.5f, v->position.z }, ColorAlpha(nodeCol, 0.8f));
+                    }
                 }
 
                 // Prominent START Beacon with 26m vertical laser beam and pulsating radar ground rings
@@ -927,6 +950,15 @@ int main() {
             if (isHovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 showHUD = true;
             }
+        }
+
+        static int s_frameCounter = 0;
+        s_frameCounter++;
+        const char* screenshotPath = getenv("ROVER_SCREENSHOT_PATH");
+        const char* frameTarget = getenv("ROVER_SCREENSHOT_FRAMES");
+        if (screenshotPath && frameTarget && s_frameCounter == atoi(frameTarget)) {
+            TakeScreenshot(screenshotPath);
+            break;
         }
 
         EndDrawing();

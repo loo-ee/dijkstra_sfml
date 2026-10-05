@@ -3,6 +3,21 @@
 #include <raymath.h>
 #include <cmath>
 
+inline Vector3 rotateVectorAroundAxis(Vector3 v, Vector3 axis, float angleRad) {
+    float c = cosf(angleRad);
+    float s = sinf(angleRad);
+    Vector3 a = Vector3Normalize(axis);
+    Vector3 cross = Vector3CrossProduct(a, v);
+    float dot = Vector3DotProduct(a, v);
+    return Vector3Add(
+        Vector3Scale(v, c),
+        Vector3Add(
+            Vector3Scale(cross, s),
+            Vector3Scale(a, dot * (1.0f - c))
+        )
+    );
+}
+
 class OrbitCameraController {
 public:
     OrbitCameraController(Vector3 position = { 0.0f, 30.0f, 40.0f },
@@ -16,7 +31,7 @@ public:
         m_camera.projection = CAMERA_PERSPECTIVE;
     }
 
-    void update(bool isMouseOverUI = false) {
+    void update(bool isMouseOverUI = false, float (*getHeightFunc)(float, float) = nullptr, bool isDraggingLeft = false) {
         if (isMouseOverUI) return;
 
         Vector2 mouseDelta = GetMouseDelta();
@@ -49,8 +64,6 @@ public:
                 float newDist = dist * zoomFactor;
 
                 if (newDist >= 3.0f && newDist <= 600.0f) {
-                    // Scale position and target relative to the cursor focal point
-                    // This keeps the 3D point under the mouse cursor stationary on the screen!
                     m_camera.position = Vector3Add(focusPoint, Vector3Scale(Vector3Subtract(m_camera.position, focusPoint), zoomFactor));
                     m_camera.target   = Vector3Add(focusPoint, Vector3Scale(Vector3Subtract(m_camera.target, focusPoint), zoomFactor));
 
@@ -62,23 +75,52 @@ public:
             }
         }
 
-        // 2. Pan: Middle-click drag or Shift+RMB shifts target and position in camera screen plane
-        if (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE) || 
-            (IsKeyDown(KEY_LEFT_SHIFT) && IsMouseButtonDown(MOUSE_BUTTON_RIGHT))) {
+        // 2. Pan / Globe Surface Rotation:
+        // Triggered by Middle-click drag, Shift+RMB drag, or Left-drag across terrain
+        bool isPanning = IsMouseButtonDown(MOUSE_BUTTON_MIDDLE) || 
+                         (IsKeyDown(KEY_LEFT_SHIFT) && IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) ||
+                         isDraggingLeft;
+
+        if (isPanning && (fabsf(mouseDelta.x) > 0.001f || fabsf(mouseDelta.y) > 0.001f)) {
             Vector3 forward = Vector3Normalize(Vector3Subtract(m_camera.target, m_camera.position));
             Vector3 right = Vector3Normalize(Vector3CrossProduct(forward, m_camera.up));
-            Vector3 screenUp = Vector3Normalize(Vector3CrossProduct(right, forward));
+
+            // Planet sphere center at (0, -R, 0)
+            const Vector3 planetCenter = { 0.0f, -1400.0f, 0.0f };
+            Vector3 toTarget = Vector3Subtract(m_camera.target, planetCenter);
+            Vector3 toPos = Vector3Subtract(m_camera.position, planetCenter);
 
             float dist = Vector3Distance(m_camera.position, m_camera.target);
-            float panSpeed = dist * 0.0015f;
+            float rotSpeed = 0.0018f * Clamp(dist / 40.0f, 0.4f, 2.5f);
 
-            Vector3 panDelta = Vector3Add(
-                Vector3Scale(right, -mouseDelta.x * panSpeed),
-                Vector3Scale(screenUp, mouseDelta.y * panSpeed)
-            );
+            float dYaw = -mouseDelta.x * rotSpeed;
+            float dPitch = -mouseDelta.y * rotSpeed;
 
-            m_camera.target = Vector3Add(m_camera.target, panDelta);
-            m_camera.position = Vector3Add(m_camera.position, panDelta);
+            // 1. Rotate around planet vertical axis (world Y)
+            toTarget = rotateVectorAroundAxis(toTarget, Vector3{ 0.0f, 1.0f, 0.0f }, dYaw);
+            toPos = rotateVectorAroundAxis(toPos, Vector3{ 0.0f, 1.0f, 0.0f }, dYaw);
+
+            // 2. Rotate around camera right axis (rolling over spherical horizon)
+            toTarget = rotateVectorAroundAxis(toTarget, right, dPitch);
+            toPos = rotateVectorAroundAxis(toPos, right, dPitch);
+
+            Vector3 newTarget = Vector3Add(planetCenter, toTarget);
+            Vector3 newPos = Vector3Add(planetCenter, toPos);
+
+            // 3. Anchor target strictly to terrain elevation
+            if (getHeightFunc) {
+                float terrainY = getHeightFunc(newTarget.x, newTarget.z);
+                float deltaY = terrainY - newTarget.y;
+                newTarget.y = terrainY;
+                newPos.y += deltaY;
+            }
+
+            if (newPos.y < newTarget.y + 1.2f) {
+                newPos.y = newTarget.y + 1.2f;
+            }
+
+            m_camera.target = newTarget;
+            m_camera.position = newPos;
         }
         // 3. Orbit Rotation: Right-click drag rotates pitch and yaw around target center
         else if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {

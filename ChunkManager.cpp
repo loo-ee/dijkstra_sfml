@@ -48,18 +48,8 @@ void ChunkManager::update(Vector3 roverPos, const TerrainHeightfield& generator,
         }
     }
 
-    // 2. Stream out Chunks outside Active Radius
-    for (auto it = m_activeChunks.begin(); it != m_activeChunks.end(); ) {
-        int chX = it->second->getChunkX();
-        int chZ = it->second->getChunkZ();
-
-        if (std::abs(chX - cx) > m_radius || std::abs(chZ - cz) > m_radius) {
-            it->second->unload(physics);
-            it = m_activeChunks.erase(it);
-        } else {
-            ++it;
-        }
-    }
+    // 2. Chunks are persistently cached in memory so previously panned-out areas are preserved!
+    // (No unloading so users can freely explore and return to past terrain)
 }
 
 void ChunkManager::draw(bool wireframe) const {
