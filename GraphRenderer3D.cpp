@@ -6,21 +6,21 @@
 Color GraphRenderer3D::getNodeColor(NodeState state) {
     switch (state) {
         case NodeState::DEFAULT:
-            return Color{ 180, 195, 210, 255 }; // Clean metallic silver-blue
+            return Color{ 40, 215, 255, 255 };  // Electric luminous cyan (high contrast against Martian terrain)
         case NodeState::START:
-            return Color{ 46, 204, 113, 255 };  // Emerald green
+            return Color{ 46, 230, 113, 255 };  // Brilliant emerald green
         case NodeState::END:
-            return Color{ 231, 76, 60, 255 };   // Vibrant red
+            return Color{ 235, 60, 60, 255 };   // Vibrant laser red
         case NodeState::CURRENT:
-            return Color{ 241, 196, 15, 255 };  // Bright gold / amber
+            return Color{ 255, 210, 40, 255 };  // Radiant sunfire gold / amber
         case NodeState::VISITED:
-            return Color{ 52, 152, 219, 255 };  // Sky blue
+            return Color{ 60, 160, 245, 255 };  // Luminous sapphire / sky blue
         case NodeState::PATH:
-            return Color{ 155, 89, 182, 255 };  // Vivid violet
+            return Color{ 46, 230, 113, 255 };  // Radiant emerald jewel
         case NodeState::IMPASSABLE:
-            return Color{ 60, 60, 65, 255 };    // Dark basalt / charcoal
+            return Color{ 180, 50, 50, 200 };   // Dark crimson hazard
         default:
-            return LIGHTGRAY;
+            return Color{ 40, 215, 255, 255 };
     }
 }
 
@@ -30,11 +30,12 @@ void GraphRenderer3D::drawNode(const Vertex3D& vertex, float radius) {
     
     // Highlight CURRENT state with dynamic sinusoidal pulsation
     if (vertex.state == NodeState::CURRENT) {
-        effectiveRadius += sinf(static_cast<float>(GetTime()) * 8.0f) * 0.2f * radius;
+        effectiveRadius += sinf(static_cast<float>(GetTime()) * 8.0f) * 0.25f * radius;
     }
     
     DrawSphere(vertex.position, effectiveRadius, color);
-    DrawSphereWires(vertex.position, effectiveRadius, 8, 8, ColorAlpha(BLACK, 0.25f));
+    DrawSphereWires(vertex.position, effectiveRadius * 1.25f, 6, 6, ColorAlpha(color, 0.60f));
+    DrawLine3D(vertex.position, Vector3{ vertex.position.x, vertex.position.y - 0.5f, vertex.position.z }, ColorAlpha(color, 0.75f));
 }
 
 void GraphRenderer3D::drawEdge(const Vector3& start, const Vector3& end, float radius, Color color) {

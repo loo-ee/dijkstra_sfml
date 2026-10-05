@@ -504,9 +504,9 @@ int main() {
         // 2. Atmospheric Sky Gradient (2D background with depth testing disabled)
         rlDisableDepthMask();
         rlDisableDepthTest();
-        DrawRectangleGradientV(0, 0, GetScreenWidth(), GetScreenHeight(), 
-            Color{ 12, 14, 24, 255 }, 
-            Color{ 72, 38, 30, 255 }
+        DrawRectangleGradientV(0, 0, GetRenderWidth(), GetRenderHeight(), 
+            Color{ 10, 12, 22, 255 }, 
+            Color{ 118, 62, 45, 255 }
         );
         rlEnableDepthTest();
         rlEnableDepthMask();
@@ -516,23 +516,27 @@ int main() {
         // 3D Scene Rendering
         BeginMode3D(activeCamera);
         {
-            // A. Distant Martian Sun (pale blue disk with soft halo)
-            DrawSphere(sunPosition, 6.0f, Color{ 190, 225, 255, 255 });
-            DrawSphereWires(sunPosition, 9.0f, 6, 6, ColorAlpha(Color{ 150, 200, 255, 255 }, 0.4f));
+            // A. Distant Martian Sun (pale blue disk with soft atmospheric halo)
+            DrawSphere(sunPosition, 6.5f, Color{ 195, 230, 255, 255 });
+            DrawSphereWires(sunPosition, 10.0f, 8, 8, ColorAlpha(Color{ 150, 205, 255, 255 }, 0.45f));
 
-            // B. Draw Procedural Martian Terrain Mesh with High-Definition Surface Texture
-            if (showTerrain) {
+            // B. Draw Procedural Martian Planetary Globe Mesh (1,440m circular sphere)
+            if (showTerrain && terrain.isLoaded()) {
+                rlDisableBackfaceCulling();
+                DrawModel(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, WHITE);
+                rlEnableBackfaceCulling();
+
+                if (showWireframe) {
+                    DrawModelWires(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, ColorAlpha(BLACK, 0.2f));
+                }
+
                 if (infiniteWorldMode) {
                     chunkMgr.draw(showWireframe);
-                } else if (terrain.isLoaded()) {
-                    rlDisableBackfaceCulling();
-                    DrawModel(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, WHITE);
-                    rlEnableBackfaceCulling();
-
-                    if (showWireframe) {
-                        DrawModelWires(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, ColorAlpha(BLACK, 0.2f));
-                    }
                 }
+
+                // Curved Atmospheric Horizon Glow Ring (Spherical Horizon Silhouette)
+                DrawCircle3D(Vector3{ 0.0f, -220.0f, 0.0f }, 725.0f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 210, 115, 75, 255 }, 0.40f));
+                DrawCircle3D(Vector3{ 0.0f, -224.0f, 0.0f }, 738.0f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 180, 85, 55, 255 }, 0.20f));
             }
 
             // C. Draw Static Boulders (Craggy rock shading with sunlit facets)
@@ -555,35 +559,46 @@ int main() {
             // F. Phase 4: Draw Brilliant Glowing Emerald Shortest Path along Terrain Surface
             GraphRenderer3D::drawShortestPath(dijkstra.getShortestPathNodes(), sceneTime);
 
-            // G. Draw Draped NavGraph Nodes (Sleek compact dots for regular nodes, beacons for Start/End)
+            // G. Draw Draped NavGraph Nodes (Prominent Glowing 3D Spheres with Halos & Anchors)
             if (showNodes) {
                 for (const Vertex3D* v : navGraph.getVertices()) {
                     if (v == navGraph.getStartNode() || v == navGraph.getEndNode()) {
                         continue; // Drawn prominently below
                     }
+
+                    if (v->state == NodeState::IMPASSABLE) {
+                        // Subtle hazard pip on impassable rock/slope
+                        DrawSphere(v->position, 0.45f, Color{ 85, 45, 45, 180 });
+                        continue;
+                    }
+
                     Color nodeCol = GraphRenderer3D::getNodeColor(v->state);
-                    float r = (v->state == NodeState::IMPASSABLE) ? 0.30f : 0.38f;
+                    float r = 0.95f; // Prominently visible from panoramic orbit camera!
                     DrawSphere(v->position, r, nodeCol);
+                    DrawSphereWires(v->position, r * 1.25f, 6, 6, ColorAlpha(nodeCol, 0.60f));
+                    DrawLine3D(v->position, Vector3{ v->position.x, v->position.y - 0.5f, v->position.z }, ColorAlpha(nodeCol, 0.8f));
                 }
 
-                // Prominent START Beacon with vertical light pillar and pulsating ground ring
+                // Prominent START Beacon with 26m vertical laser beam and pulsating radar ground rings
                 if (const Vertex3D* s = navGraph.getStartNode()) {
-                    Vector3 pillarTop = Vector3Add(s->position, Vector3{ 0.0f, 16.0f, 0.0f });
-                    DrawCylinderEx(s->position, pillarTop, 0.25f, 0.02f, 8, ColorAlpha(GREEN, 0.75f));
-                    DrawSphere(s->position, 1.4f, Color{ 46, 204, 113, 255 });
-                    DrawSphereWires(s->position, 1.4f, 8, 8, ColorAlpha(WHITE, 0.85f));
-                    float pulseR = 2.4f + sinf(sceneTime * 4.0f) * 0.5f;
-                    DrawCircle3D(s->position, pulseR, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(GREEN, 0.7f));
+                    Vector3 pillarTop = Vector3Add(s->position, Vector3{ 0.0f, 26.0f, 0.0f });
+                    DrawCylinderEx(s->position, pillarTop, 0.40f, 0.05f, 10, ColorAlpha(Color{ 46, 230, 113, 255 }, 0.85f));
+                    DrawSphere(s->position, 1.8f, Color{ 46, 230, 113, 255 });
+                    DrawSphereWires(s->position, 2.3f, 8, 8, WHITE);
+                    float pulseR = 3.5f + sinf(sceneTime * 4.0f) * 0.8f;
+                    DrawCircle3D(s->position, pulseR, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 46, 230, 113, 255 }, 0.75f));
+                    DrawCircle3D(s->position, pulseR * 1.5f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 46, 230, 113, 255 }, 0.35f));
                 }
 
-                // Prominent END Beacon with vertical light pillar and pulsating ground ring
+                // Prominent END Beacon with 26m vertical laser beam and pulsating radar ground rings
                 if (const Vertex3D* e = navGraph.getEndNode()) {
-                    Vector3 pillarTop = Vector3Add(e->position, Vector3{ 0.0f, 16.0f, 0.0f });
-                    DrawCylinderEx(e->position, pillarTop, 0.25f, 0.02f, 8, ColorAlpha(RED, 0.75f));
-                    DrawSphere(e->position, 1.4f, Color{ 231, 76, 60, 255 });
-                    DrawSphereWires(e->position, 1.4f, 8, 8, ColorAlpha(WHITE, 0.85f));
-                    float pulseR = 2.4f + sinf(sceneTime * 4.0f + 1.5f) * 0.5f;
-                    DrawCircle3D(e->position, pulseR, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(RED, 0.7f));
+                    Vector3 pillarTop = Vector3Add(e->position, Vector3{ 0.0f, 26.0f, 0.0f });
+                    DrawCylinderEx(e->position, pillarTop, 0.40f, 0.05f, 10, ColorAlpha(Color{ 235, 60, 60, 255 }, 0.85f));
+                    DrawSphere(e->position, 1.8f, Color{ 235, 60, 60, 255 });
+                    DrawSphereWires(e->position, 2.3f, 8, 8, WHITE);
+                    float pulseR = 3.5f + sinf(sceneTime * 4.0f + 1.5f) * 0.8f;
+                    DrawCircle3D(e->position, pulseR, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 235, 60, 60, 255 }, 0.75f));
+                    DrawCircle3D(e->position, pulseR * 1.5f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 235, 60, 60, 255 }, 0.35f));
                 }
             }
 

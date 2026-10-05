@@ -244,27 +244,42 @@ float TerrainHeightfield::evaluateRawHeight(float x, float z) const {
         height += samplePerlin(x * 0.02f, z * 0.02f) * 0.8f;
     }
 
+    // Planetary Spherical Globe Curvature (Mars Planetary Body Radius R ~ 1400m)
+    // Curvature equation: y = -(R - sqrt(max(0, R^2 - (x^2 + z^2))))
+    const float planetRadius = 1400.0f;
+    float distSq = x * x + z * z;
+    float globeDrop = 0.0f;
+    if (distSq < planetRadius * planetRadius) {
+        globeDrop = planetRadius - sqrtf(planetRadius * planetRadius - distSq);
+    } else {
+        globeDrop = planetRadius + (sqrtf(distSq) - planetRadius) * 1.5f;
+    }
+    height -= globeDrop;
+
     return height;
 }
 
 void TerrainHeightfield::generate() {
     unload();
 
-    const float halfSize = m_size * 0.5f;
+    const float halfPhys = m_size * 0.5f;
 
-    // 1. Precalculate 2D Height Grid
+    // 1. Precalculate 2D Height Grid for Jolt Physics Static Collider
     for (int gz = 0; gz < m_resolution; ++gz) {
         for (int gx = 0; gx < m_resolution; ++gx) {
-            float worldX = -halfSize + gx * m_spacing;
-            float worldZ = -halfSize + gz * m_spacing;
+            float worldX = -halfPhys + gx * m_spacing;
+            float worldZ = -halfPhys + gz * m_spacing;
             m_heightData[gz * m_resolution + gx] = evaluateRawHeight(worldX, worldZ);
         }
     }
 
-    // 2. Construct Raylib Mesh with Normal Vectors and Slope-based Vertex Shading
-    int numVertices = m_resolution * m_resolution;
-    int numQuads = (m_resolution - 1) * (m_resolution - 1);
-    int numTriangles = numQuads * 2;
+    // 2. Construct Circular Planetary Globe Mesh (Diameter = 1,440m with 360-degree curved horizon)
+    const int numRings = 64;
+    const int numSectors = 72; // 5 degrees per sector
+    const float horizonRadius = 720.0f;
+
+    int numVertices = 1 + numRings * numSectors;
+    int numTriangles = numSectors + (numRings - 1) * numSectors * 2;
 
     Mesh mesh = {};
     mesh.vertexCount = numVertices;
@@ -276,29 +291,69 @@ void TerrainHeightfield::generate() {
     mesh.colors = static_cast<unsigned char*>(MemAlloc(numVertices * 4 * sizeof(unsigned char)));
     mesh.indices = static_cast<unsigned short*>(MemAlloc(numTriangles * 3 * sizeof(unsigned short)));
 
-    // Populate Vertices, Normals, and Colors
-    for (int gz = 0; gz < m_resolution; ++gz) {
-        for (int gx = 0; gx < m_resolution; ++gx) {
-            int vIdx = gz * m_resolution + gx;
-            float worldX = -halfSize + gx * m_spacing;
-            float worldZ = -halfSize + gz * m_spacing;
-            float worldY = m_heightData[vIdx];
+    // Vertex 0: Planetary Zenith Center (0, Y, 0)
+    float centerY = evaluateRawHeight(0.0f, 0.0f);
+    mesh.vertices[0] = 0.0f;
+    mesh.vertices[1] = centerY;
+    mesh.vertices[2] = 0.0f;
 
-            mesh.vertices[vIdx * 3 + 0] = worldX;
-            mesh.vertices[vIdx * 3 + 1] = worldY;
-            mesh.vertices[vIdx * 3 + 2] = worldZ;
+    Vector3 centerNorm = getNormal(0.0f, 0.0f);
+    mesh.normals[0] = centerNorm.x;
+    mesh.normals[1] = centerNorm.y;
+    mesh.normals[2] = centerNorm.z;
 
-            // Surface normal & slope angle via central differences
-            Vector3 norm = getNormal(worldX, worldZ);
+    mesh.texcoords[0] = 0.0f;
+    mesh.texcoords[1] = 0.0f;
+
+    float centerSlope = acosf(Clamp(centerNorm.y, -1.0f, 1.0f));
+    Color centerCol = getSlopeColor(centerSlope, centerNorm);
+    mesh.colors[0] = centerCol.r;
+    mesh.colors[1] = centerCol.g;
+    mesh.colors[2] = centerCol.b;
+    mesh.colors[3] = centerCol.a;
+
+    // Concentric Globe Rings: Dense near rover (r < 120m), sweeping out to circular planetary horizon (r = 720m)
+    for (int rIdx = 0; rIdx < numRings; ++rIdx) {
+        float u = static_cast<float>(rIdx + 1) / static_cast<float>(numRings);
+        // Non-linear power distribution allocates high polygon density to exploration core
+        float radius = powf(u, 1.25f) * horizonRadius;
+
+        for (int sIdx = 0; sIdx < numSectors; ++sIdx) {
+            int vIdx = 1 + rIdx * numSectors + sIdx;
+            float angle = static_cast<float>(sIdx) * (2.0f * PI / static_cast<float>(numSectors));
+
+            float wx = radius * cosf(angle);
+            float wz = radius * sinf(angle);
+            float wy = evaluateRawHeight(wx, wz);
+
+            // Outermost horizon rim skirt curves downward below the horizon line
+            if (rIdx == numRings - 1) {
+                wy -= 36.0f;
+            }
+
+            mesh.vertices[vIdx * 3 + 0] = wx;
+            mesh.vertices[vIdx * 3 + 1] = wy;
+            mesh.vertices[vIdx * 3 + 2] = wz;
+
+            Vector3 norm = getNormal(wx, wz);
             mesh.normals[vIdx * 3 + 0] = norm.x;
             mesh.normals[vIdx * 3 + 1] = norm.y;
             mesh.normals[vIdx * 3 + 2] = norm.z;
 
-            mesh.texcoords[vIdx * 2 + 0] = static_cast<float>(gx) / (m_resolution - 1) * 20.0f;
-            mesh.texcoords[vIdx * 2 + 1] = static_cast<float>(gz) / (m_resolution - 1) * 20.0f;
+            // Continuous world-space UV texture mapping
+            mesh.texcoords[vIdx * 2 + 0] = wx / 12.0f;
+            mesh.texcoords[vIdx * 2 + 1] = wz / 12.0f;
 
             float slopeRad = acosf(Clamp(norm.y, -1.0f, 1.0f));
             Color vertexColor = getSlopeColor(slopeRad, norm);
+
+            // Soft atmospheric darkening near the circular horizon edge
+            if (rIdx >= numRings - 8) {
+                float fade = static_cast<float>(numRings - 1 - rIdx) / 8.0f;
+                vertexColor.r = static_cast<unsigned char>(vertexColor.r * (0.6f + 0.4f * fade));
+                vertexColor.g = static_cast<unsigned char>(vertexColor.g * (0.6f + 0.4f * fade));
+                vertexColor.b = static_cast<unsigned char>(vertexColor.b * (0.6f + 0.4f * fade));
+            }
 
             mesh.colors[vIdx * 4 + 0] = vertexColor.r;
             mesh.colors[vIdx * 4 + 1] = vertexColor.g;
@@ -307,24 +362,38 @@ void TerrainHeightfield::generate() {
         }
     }
 
-    // Populate Triangles (CCW winding)
+    // Populate Triangles (CCW Winding)
     int tIdx = 0;
-    for (int gz = 0; gz < m_resolution - 1; ++gz) {
-        for (int gx = 0; gx < m_resolution - 1; ++gx) {
-            unsigned short topLeft = static_cast<unsigned short>(gz * m_resolution + gx);
-            unsigned short topRight = static_cast<unsigned short>(topLeft + 1);
-            unsigned short bottomLeft = static_cast<unsigned short>((gz + 1) * m_resolution + gx);
-            unsigned short bottomRight = static_cast<unsigned short>(bottomLeft + 1);
+
+    // 1. Central Fan: Center vertex 0 connected to Ring 0
+    for (int s = 0; s < numSectors; ++s) {
+        int nextS = (s + 1) % numSectors;
+        mesh.indices[tIdx++] = 0;
+        mesh.indices[tIdx++] = static_cast<unsigned short>(1 + nextS);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(1 + s);
+    }
+
+    // 2. Concentric Ring Quad Strips
+    for (int r = 0; r < numRings - 1; ++r) {
+        int currBase = 1 + r * numSectors;
+        int nextBase = 1 + (r + 1) * numSectors;
+
+        for (int s = 0; s < numSectors; ++s) {
+            int nextS = (s + 1) % numSectors;
+            unsigned short v00 = static_cast<unsigned short>(currBase + s);
+            unsigned short v01 = static_cast<unsigned short>(currBase + nextS);
+            unsigned short v10 = static_cast<unsigned short>(nextBase + s);
+            unsigned short v11 = static_cast<unsigned short>(nextBase + nextS);
 
             // Triangle 1
-            mesh.indices[tIdx++] = topLeft;
-            mesh.indices[tIdx++] = bottomLeft;
-            mesh.indices[tIdx++] = topRight;
+            mesh.indices[tIdx++] = v00;
+            mesh.indices[tIdx++] = v11;
+            mesh.indices[tIdx++] = v01;
 
-            // Triangle 2 (CCW normal pointing upward)
-            mesh.indices[tIdx++] = bottomLeft;
-            mesh.indices[tIdx++] = bottomRight;
-            mesh.indices[tIdx++] = topRight;
+            // Triangle 2
+            mesh.indices[tIdx++] = v00;
+            mesh.indices[tIdx++] = v10;
+            mesh.indices[tIdx++] = v11;
         }
     }
 

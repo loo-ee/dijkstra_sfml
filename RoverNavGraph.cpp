@@ -37,15 +37,25 @@ void RoverNavGraph::generateCenteredGrid(const TerrainHeightfield& terrain, Vect
 
     float offsetX = (gridCols - 1) * spacing * 0.5f;
     float offsetZ = (gridRows - 1) * spacing * 0.5f;
+    const float maxNavRadius = 82.0f; // Constrain graph to circular radar disc
 
+    std::vector<Vertex3D*> grid(gridCols * gridRows, nullptr);
     m_vertices.reserve(gridCols * gridRows);
 
-    // 1. Create Nodes Draped over Terrain (+0.3m elevation offset to prevent z-fighting)
+    // 1. Create Nodes Draped over Terrain (+0.35m elevation offset to prevent z-fighting)
     for (int r = 0; r < gridRows; ++r) {
         for (int c = 0; c < gridCols; ++c) {
-            float worldX = centerPos.x + (c * spacing - offsetX);
-            float worldZ = centerPos.z + (r * spacing - offsetZ);
-            float worldY = terrain.getHeight(worldX, worldZ) + 0.3f;
+            float relX = c * spacing - offsetX;
+            float relZ = r * spacing - offsetZ;
+            float distFromCenter = sqrtf(relX * relX + relZ * relZ);
+
+            if (distFromCenter > maxNavRadius) {
+                continue; // Exclude nodes outside circular navigation boundary
+            }
+
+            float worldX = centerPos.x + relX;
+            float worldZ = centerPos.z + relZ;
+            float worldY = terrain.getHeight(worldX, worldZ) + 0.35f;
 
             std::string name = "N_" + std::to_string(c) + "_" + std::to_string(r);
             Vertex3D* node = new Vertex3D(name, Vector3{ worldX, worldY, worldZ });
@@ -63,6 +73,7 @@ void RoverNavGraph::generateCenteredGrid(const TerrainHeightfield& terrain, Vect
                 node->state = NodeState::DEFAULT;
             }
 
+            grid[r * gridCols + c] = node;
             m_vertices.push_back(node);
         }
     }
@@ -77,9 +88,9 @@ void RoverNavGraph::generateCenteredGrid(const TerrainHeightfield& terrain, Vect
     // 1b. Cliff & Steep Drop-Off Proximity Buffer (Safety Standoff Margin)
     for (int r = 0; r < gridRows; ++r) {
         for (int c = 0; c < gridCols; ++c) {
-            Vertex3D* u = m_vertices[getIndex(c, r)];
-            if (!u->isWalkable) {
-                u->cliffProximity = 1.0f;
+            Vertex3D* u = grid[getIndex(c, r)];
+            if (!u || !u->isWalkable) {
+                if (u) u->cliffProximity = 1.0f;
                 continue;
             }
             float maxAdjSlope = u->slopeAngleRad;
@@ -88,7 +99,8 @@ void RoverNavGraph::generateCenteredGrid(const TerrainHeightfield& terrain, Vect
                 int nc = c + dc[i];
                 int nr = r + dr[i];
                 if (nc >= 0 && nc < gridCols && nr >= 0 && nr < gridRows) {
-                    Vertex3D* v = m_vertices[getIndex(nc, nr)];
+                    Vertex3D* v = grid[getIndex(nc, nr)];
+                    if (!v) continue;
                     if (!v->isWalkable || v->slopeAngleRad > 18.0f * DEG2RAD) {
                         nextToCliff = true;
                     }
@@ -108,24 +120,24 @@ void RoverNavGraph::generateCenteredGrid(const TerrainHeightfield& terrain, Vect
     // 2. Connect 8-Neighborhood (Cardinals + Diagonals)
     for (int r = 0; r < gridRows; ++r) {
         for (int c = 0; c < gridCols; ++c) {
-            int uIdx = getIndex(c, r);
-            Vertex3D* u = m_vertices[uIdx];
+            Vertex3D* u = grid[getIndex(c, r)];
+            if (!u) continue;
 
             for (int i = 0; i < 8; ++i) {
                 int nc = c + dc[i];
                 int nr = r + dr[i];
 
                 if (nc >= 0 && nc < gridCols && nr >= 0 && nr < gridRows) {
-                    int vIdx = getIndex(nc, nr);
-                    Vertex3D* v = m_vertices[vIdx];
+                    Vertex3D* v = grid[getIndex(nc, nr)];
+                    if (!v) continue;
 
                     float dist = Vector3Distance(u->position, v->position);
                     u->neighbors.emplace_back(v->name, dist);
 
                     // Add unique undirected edge to rendering list
-                    if (uIdx < vIdx) {
+                    if (u < v) {
                         bool steep = (!u->isWalkable || !v->isWalkable);
-                        Color edgeColor = steep ? Color{ 220, 50, 50, 180 } : Color{ 90, 115, 145, 190 };
+                        Color edgeColor = steep ? Color{ 180, 40, 40, 75 } : Color{ 60, 205, 255, 175 };
                         m_edges.push_back({ u->position, v->position, edgeColor, steep, u->name, v->name });
                         if (steep) {
                             std::string key = (u->name < v->name) ? (u->name + "_" + v->name) : (v->name + "_" + u->name);
@@ -306,11 +318,11 @@ void RoverNavGraph::buildEdgeMeshes() {
     }
 
     if (!walkablePairs.empty()) {
-        Mesh wm = buildBatchEdgeMesh(walkablePairs, 0.05f, Color{ 140, 175, 215, 180 });
+        Mesh wm = buildBatchEdgeMesh(walkablePairs, 0.075f, Color{ 50, 205, 255, 180 });
         m_walkableEdgesModel = LoadModelFromMesh(wm);
     }
     if (!blockedPairs.empty()) {
-        Mesh bm = buildBatchEdgeMesh(blockedPairs, 0.14f, Color{ 240, 45, 45, 240 });
+        Mesh bm = buildBatchEdgeMesh(blockedPairs, 0.04f, Color{ 180, 45, 45, 75 });
         m_blockedEdgesModel = LoadModelFromMesh(bm);
     }
     m_edgesModelsLoaded = true;
