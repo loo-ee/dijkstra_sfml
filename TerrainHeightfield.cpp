@@ -45,42 +45,81 @@ namespace {
 }
 
 TerrainHeightfield::TerrainHeightfield(int resolution, float size)
-    : m_resolution(resolution), m_size(size), m_isLoaded(false)
+    : m_resolution(resolution), m_size(size), m_preset(TerrainPreset::OLYMPUS_CRATER), m_isLoaded(false)
 {
     m_spacing = m_size / (m_resolution - 1);
     m_heightData.resize(m_resolution * m_resolution, 0.0f);
-
-    // Setup distinct Martian craters
-    // Primary crater: prominent impact basin with raised rim wall
-    m_craters.push_back({
-        Vector2{ 25.0f, -15.0f }, // center
-        32.0f,                    // radius R
-        9.0f,                     // depth d
-        4.0f,                     // rimHeight
-        5.5f                      // rimWidth sigma
-    });
-
-    // Secondary crater: smaller satellite crater
-    m_craters.push_back({
-        Vector2{ -45.0f, 35.0f },
-        20.0f,
-        5.5f,
-        2.8f,
-        4.0f
-    });
-
-    // Third shallow crater
-    m_craters.push_back({
-        Vector2{ -20.0f, -40.0f },
-        16.0f,
-        3.5f,
-        1.8f,
-        3.2f
-    });
+    configureCratersForPreset();
 }
 
 TerrainHeightfield::~TerrainHeightfield() {
     unload();
+}
+
+void TerrainHeightfield::setPreset(TerrainPreset preset) {
+    m_preset = preset;
+    configureCratersForPreset();
+}
+
+const char* TerrainHeightfield::getPresetName() const {
+    switch (m_preset) {
+        case TerrainPreset::OLYMPUS_CRATER:   return "The Olympus Crater";
+        case TerrainPreset::SCREE_SLOPE:      return "Loose Scree Slope";
+        case TerrainPreset::BOULDER_SLALOM:   return "Martian Canyon Slalom";
+        case TerrainPreset::ACIDALIA_PLANITIA: return "Acidalia Planitia Dunes";
+        default: return "Unknown";
+    }
+}
+
+void TerrainHeightfield::cyclePreset() {
+    int next = (static_cast<int>(m_preset) + 1) % 4;
+    setPreset(static_cast<TerrainPreset>(next));
+}
+
+void TerrainHeightfield::configureCratersForPreset() {
+    m_craters.clear();
+
+    if (m_preset == TerrainPreset::OLYMPUS_CRATER) {
+        // Primary crater: prominent impact basin with raised rim wall
+        m_craters.push_back({
+            Vector2{ 20.0f, -10.0f },
+            32.0f,
+            9.0f,
+            4.0f,
+            5.5f
+        });
+        m_craters.push_back({
+            Vector2{ -45.0f, 35.0f },
+            20.0f,
+            5.5f,
+            2.8f,
+            4.0f
+        });
+        m_craters.push_back({
+            Vector2{ -20.0f, -40.0f },
+            16.0f,
+            3.5f,
+            1.8f,
+            3.2f
+        });
+    } else if (m_preset == TerrainPreset::SCREE_SLOPE) {
+        m_craters.push_back({
+            Vector2{ -35.0f, -25.0f },
+            18.0f,
+            4.5f,
+            2.0f,
+            3.5f
+        });
+    } else if (m_preset == TerrainPreset::BOULDER_SLALOM) {
+        m_craters.push_back({
+            Vector2{ 50.0f, 40.0f },
+            18.0f,
+            5.0f,
+            2.5f,
+            3.5f
+        });
+    }
+    // ACIDALIA_PLANITIA has 0 craters (pure rolling dune plains)
 }
 
 void TerrainHeightfield::unload() {
@@ -119,35 +158,70 @@ float TerrainHeightfield::samplePerlin(float x, float z) const {
 }
 
 float TerrainHeightfield::evaluateRawHeight(float x, float z) const {
-    // 1. Fractal Brownian Motion (fBm)
-    // h(x, z) = sum_{i=0}^{N-1} A * gamma^i * Noise(f * 2^i * x, f * 2^i * z)
-    float baseAmp = 14.0f;
-    float baseFreq = 0.012f;
-    float persistence = 0.5f;
     float height = 0.0f;
 
-    for (int i = 0; i < 4; ++i) {
-        float freq = baseFreq * (1 << i);
-        float amp = baseAmp * powf(persistence, static_cast<float>(i));
-        height += amp * samplePerlin(x * freq, z * freq);
-    }
+    if (m_preset == TerrainPreset::OLYMPUS_CRATER) {
+        // Fractal Brownian Motion (fBm)
+        float baseAmp = 12.0f;
+        float baseFreq = 0.012f;
+        float persistence = 0.5f;
 
-    // 2. Martian Impact Crater Displacements
-    for (const auto& c : m_craters) {
-        float dx = x - c.center.x;
-        float dz = z - c.center.y;
-        float r = sqrtf(dx * dx + dz * dz);
-
-        if (r <= 1.5f * c.radius) {
-            float normR = r / c.radius;
-            // Bowl depression (creates deep crater floor)
-            float bowl = -c.depth * std::max(0.0f, 1.0f - normR * normR);
-            // Raised rim wall typical of Martian impact craters
-            float rimDiff = r - c.radius;
-            float rim = c.rimHeight * expf(-(rimDiff * rimDiff) / (2.0f * c.rimWidth * c.rimWidth));
-
-            height += (bowl + rim);
+        for (int i = 0; i < 4; ++i) {
+            float freq = baseFreq * (1 << i);
+            float amp = baseAmp * powf(persistence, static_cast<float>(i));
+            height += amp * samplePerlin(x * freq, z * freq);
         }
+
+        // Martian Impact Crater Displacements
+        for (const auto& c : m_craters) {
+            float dx = x - c.center.x;
+            float dz = z - c.center.y;
+            float r = sqrtf(dx * dx + dz * dz);
+
+            if (r <= 1.5f * c.radius) {
+                float normR = r / c.radius;
+                float bowl = -c.depth * std::max(0.0f, 1.0f - normR * normR);
+                float rimDiff = r - c.radius;
+                float rim = c.rimHeight * expf(-(rimDiff * rimDiff) / (2.0f * c.rimWidth * c.rimWidth));
+                height += (bowl + rim);
+            }
+        }
+    } else if (m_preset == TerrainPreset::SCREE_SLOPE) {
+        // High-grade mountain slope with stepped terracing and loose scree
+        height += (x * 0.15f + z * 0.08f);
+        height += sinf(x * 0.055f) * 3.8f + cosf(z * 0.045f) * 2.2f;
+        height += samplePerlin(x * 0.035f, z * 0.035f) * 3.5f;
+        height += samplePerlin(x * 0.09f, z * 0.09f) * 1.0f;
+
+        for (const auto& c : m_craters) {
+            float dx = x - c.center.x;
+            float dz = z - c.center.y;
+            float r = sqrtf(dx * dx + dz * dz);
+            if (r <= 1.5f * c.radius) {
+                float normR = r / c.radius;
+                float bowl = -c.depth * std::max(0.0f, 1.0f - normR * normR);
+                float rimDiff = r - c.radius;
+                float rim = c.rimHeight * expf(-(rimDiff * rimDiff) / (2.0f * c.rimWidth * c.rimWidth));
+                height += (bowl + rim);
+            }
+        }
+    } else if (m_preset == TerrainPreset::BOULDER_SLALOM) {
+        // Winding Martian Canyon Corridor with sheer wall flanks
+        float canyonCenter = sinf(z * 0.032f) * 32.0f;
+        float distFromCanyon = fabsf(x - canyonCenter);
+
+        float canyonDepression = -8.0f * (1.0f - Clamp(distFromCanyon / 34.0f, 0.0f, 1.0f));
+        float wallFactor = Clamp((distFromCanyon - 16.0f) / 28.0f, 0.0f, 1.0f);
+        float canyonWalls = wallFactor * wallFactor * 16.0f;
+
+        height += (canyonDepression + canyonWalls);
+        height += samplePerlin(x * 0.018f, z * 0.018f) * 2.8f;
+    } else { // ACIDALIA_PLANITIA
+        // Smooth flowing low-gradient sand dunes (fast rover cruising)
+        float baseFreq = 0.007f;
+        height += samplePerlin(x * baseFreq, z * baseFreq) * 5.2f;
+        height += sinf((x * 0.7f + z * 0.3f) * 0.04f) * 1.5f;
+        height += samplePerlin(x * 0.02f, z * 0.02f) * 0.8f;
     }
 
     return height;

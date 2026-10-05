@@ -48,12 +48,12 @@ void RoverTelemetryHUD::draw(const PlanetaryRover& rover, int screenW, int scree
         badgeBg = Color{ 16, 48, 32, 255 };
         badgeBorder = Color{ 46, 204, 113, 255 };
         badgeText = Color{ 46, 204, 113, 255 };
-        statusText = "STATUS: AUTONOMOUS PURE PURSUIT [D]";
+        statusText = "STATUS: AUTONOMOUS PURE PURSUIT [Tab/F]";
     } else {
         badgeBg = Color{ 48, 38, 16, 255 };
         badgeBorder = Color{ 241, 196, 15, 255 };
         badgeText = Color{ 241, 196, 15, 255 };
-        statusText = "STATUS: MANUAL CONTROLS ACTIVE [D]";
+        statusText = "STATUS: MANUAL [WASD] (Auto: Tab/F)";
     }
 
     Rectangle statusRect = { (float)(cardX + 16), (float)(cardY + 32), (float)(cardW - 32), 20.0f };

@@ -30,6 +30,7 @@ public:
     // Terrain & Obstacles
     void createTerrainHeightfield(const float* heightData, int cols, int rows, float spacing);
     void spawnBoulder(Vector3 pos, float radius);
+    void clearBoulders();
 
     // Dynamic Test Spheres
     JPH::BodyID spawnDynamicSphere(Vector3 pos, float radius = 1.0f, float mass = 50.0f);

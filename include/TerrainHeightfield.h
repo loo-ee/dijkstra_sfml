@@ -12,6 +12,13 @@ struct CraterParam {
     float rimWidth;
 };
 
+enum class TerrainPreset {
+    OLYMPUS_CRATER = 0,   // Impact basin with raised rim wall & central depression
+    SCREE_SLOPE,          // High-grade mountain slope with stepped terracing and dynamic scree
+    BOULDER_SLALOM,       // Winding Martian canyon pass with rock hazards
+    ACIDALIA_PLANITIA     // Smooth rolling dunes & low-gradient plains for high-speed cruising
+};
+
 class TerrainHeightfield {
 public:
     TerrainHeightfield(int resolution = 128, float size = 200.0f);
@@ -23,6 +30,12 @@ public:
 
     void generate();
     void unload();
+
+    // Terrain Preset Selection
+    void setPreset(TerrainPreset preset);
+    TerrainPreset getPreset() const { return m_preset; }
+    const char* getPresetName() const;
+    void cyclePreset();
 
     // Queries
     float getHeight(float x, float z) const;
@@ -41,10 +54,12 @@ private:
     float evaluateRawHeight(float x, float z) const;
     float samplePerlin(float x, float z) const;
     void generateSurfaceTexture();
+    void configureCratersForPreset();
 
     int m_resolution;
     float m_size;
     float m_spacing;
+    TerrainPreset m_preset = TerrainPreset::OLYMPUS_CRATER;
     std::vector<float> m_heightData;
     std::vector<CraterParam> m_craters;
     Model m_model = {};

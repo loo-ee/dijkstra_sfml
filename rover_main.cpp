@@ -35,6 +35,106 @@ static void DrawKeyBind(int x, int y, const char* key, const char* label, bool a
     DrawText(label, labelX, y + 4, 11, labelColor);
 }
 
+// Helper: Load/Switch Terrain Mode Presets with customized physical landscapes & obstacles
+static void ApplyTerrainPreset(
+    TerrainPreset preset,
+    TerrainHeightfield& terrain,
+    PhysicsWorld& physics,
+    RoverNavGraph& navGraph,
+    DijkstraSolver3D& dijkstra,
+    PlanetaryRover& rover,
+    int& blockedEdgeCount
+) {
+    terrain.setPreset(preset);
+    terrain.generate();
+
+    float terrainSpacing = terrain.getSize() / (terrain.getResolution() - 1);
+    physics.createTerrainHeightfield(
+        terrain.getHeightData().data(),
+        terrain.getResolution(),
+        terrain.getResolution(),
+        terrainSpacing
+    );
+
+    physics.clearBoulders();
+    physics.clearDynamicSpheres();
+
+    struct BoulderPreset {
+        Vector2 pos;
+        float radius;
+    };
+    std::vector<BoulderPreset> boulders;
+
+    if (preset == TerrainPreset::OLYMPUS_CRATER) {
+        boulders = {
+            { { 18.0f, -10.0f }, 3.5f },  // Inside primary crater
+            { { 32.0f, -22.0f }, 2.8f },  // On crater rim
+            { { -15.0f, 12.0f }, 3.2f },  // On open plain
+            { { -30.0f, -25.0f }, 4.0f }, // Large obstacle
+            { { 5.0f, 35.0f }, 2.5f },
+            { { -40.0f, 28.0f }, 3.0f },  // Near secondary crater
+            { { -55.0f, -10.0f }, 2.6f },
+            { { 45.0f, 20.0f }, 3.4f },
+            { { 10.0f, -45.0f }, 3.0f },
+            { { -10.0f, -60.0f }, 3.8f }
+        };
+    } else if (preset == TerrainPreset::SCREE_SLOPE) {
+        boulders = {
+            { { -20.0f, 10.0f }, 3.0f },
+            { { -10.0f, -20.0f }, 3.5f },
+            { { 15.0f, -5.0f }, 2.8f },
+            { { 25.0f, 25.0f }, 3.2f },
+            { { -35.0f, 30.0f }, 2.6f },
+            { { 0.0f, 40.0f }, 3.4f },
+            { { 40.0f, -30.0f }, 2.9f }
+        };
+    } else if (preset == TerrainPreset::BOULDER_SLALOM) {
+        // Natural slalom gates along the canyon floor
+        boulders = {
+            { { -10.0f, -50.0f }, 3.2f },
+            { { 12.0f, -30.0f }, 3.5f },
+            { { -8.0f, -10.0f }, 3.2f },
+            { { 14.0f, 10.0f }, 3.6f },
+            { { -12.0f, 30.0f }, 3.4f },
+            { { 8.0f, 50.0f }, 3.5f },
+            { { -25.0f, 0.0f }, 4.0f },
+            { { 28.0f, -20.0f }, 4.0f }
+        };
+    } else { // ACIDALIA_PLANITIA
+        boulders = {
+            { { 20.0f, 20.0f }, 2.4f },
+            { { -30.0f, -25.0f }, 2.8f },
+            { { 40.0f, -40.0f }, 2.2f },
+            { { -15.0f, 45.0f }, 2.5f }
+        };
+    }
+
+    for (const auto& bp : boulders) {
+        float h = terrain.getHeight(bp.pos.x, bp.pos.y);
+        Vector3 boulderPos = { bp.pos.x, h + bp.radius * 0.70f, bp.pos.y };
+        physics.spawnBoulder(boulderPos, bp.radius);
+    }
+
+    // Drape 3D NavGraph (26x26 = 676 nodes)
+    navGraph.generateTerrainGrid(terrain, 26, 26, 7.0f);
+    navGraph.validateEdgesWithPhysics(physics, 0.6f);
+
+    blockedEdgeCount = 0;
+    for (const auto& e : navGraph.getEdges()) {
+        if (e.isBlocked) blockedEdgeCount++;
+    }
+
+    // Solve Dijkstra route with history
+    dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(),
+                              navGraph.getVertices(), navGraph.getBlockedEdgesMap());
+
+    // Reset Rover at valid start node
+    if (navGraph.getStartNode()) {
+        rover.reset(physics, navGraph.getStartNode()->position);
+        rover.setPath(dijkstra.getShortestPathNodes());
+    }
+}
+
 int main() {
     // 1. High-DPI Window Initialization (Native Retina resolution on Apple Silicon)
     const int screenWidth = 1280;
@@ -55,84 +155,26 @@ int main() {
     PhysicsWorld physics;
     physics.init();
 
-    // 4. Generate Procedural Martian Heightfield (128x128 across 200m x 200m)
+    // 4. Procedural Martian Terrain Heightfield
     TerrainHeightfield terrain(128, 200.0f);
-    terrain.generate();
 
-    // 5. Create Physics Heightfield Collision Shape in Jolt
-    float terrainSpacing = terrain.getSize() / (terrain.getResolution() - 1);
-    physics.createTerrainHeightfield(
-        terrain.getHeightData().data(),
-        terrain.getResolution(),
-        terrain.getResolution(),
-        terrainSpacing
-    );
-
-    // 6. Spawn Static Boulders & Hazard Obstacles
-    struct BoulderPreset {
-        Vector2 pos;
-        float radius;
-    };
-    std::vector<BoulderPreset> boulderPresets = {
-        { { 18.0f, -10.0f }, 3.5f },  // Inside primary crater
-        { { 32.0f, -22.0f }, 2.8f },  // On crater rim
-        { { -15.0f, 12.0f }, 3.2f },  // On open plain
-        { { -30.0f, -25.0f }, 4.0f }, // Large obstacle
-        { { 5.0f, 35.0f }, 2.5f },
-        { { -40.0f, 28.0f }, 3.0f },  // Near secondary crater
-        { { -55.0f, -10.0f }, 2.6f },
-        { { 45.0f, 20.0f }, 3.4f },
-        { { 10.0f, -45.0f }, 3.0f },
-        { { -10.0f, -60.0f }, 3.8f },
-        { { 60.0f, -30.0f }, 2.9f },
-        { { 25.0f, 50.0f }, 3.1f },
-        { { -25.0f, 45.0f }, 2.7f },
-        { { 0.0f, -15.0f }, 2.4f },
-        { { -8.0f, 2.0f }, 2.2f }
-    };
-
-    for (const auto& bp : boulderPresets) {
-        float h = terrain.getHeight(bp.pos.x, bp.pos.y);
-        Vector3 boulderPos = { bp.pos.x, h + bp.radius * 0.70f, bp.pos.y };
-        physics.spawnBoulder(boulderPos, bp.radius);
-    }
-
-    // 7. Drape 3D NavGraph over Terrain (26x26 = 676 nodes, > 500 nodes criteria)
-    const int navCols = 26;
-    const int navRows = 26;
-    const float navSpacing = 7.0f;
-
+    // 5. 3D NavGraph
     RoverNavGraph navGraph;
-    navGraph.generateTerrainGrid(terrain, navCols, navRows, navSpacing);
 
-    // 8. Line-of-Sight Edge Validation using Physical Raycasts
-    navGraph.validateEdgesWithPhysics(physics, 0.6f);
-
-    // Count blocked edges
-    int blockedEdgeCount = 0;
-    for (const auto& e : navGraph.getEdges()) {
-        if (e.isBlocked) blockedEdgeCount++;
-    }
-
-    // 9. Initial Rolling Test Sphere (placed high on crater rim slope to demonstrate gravity)
-    float startX = 22.0f;
-    float startZ = -12.0f;
-    float sphereSpawnY = terrain.getHeight(startX, startZ) + 5.0f;
-    physics.spawnDynamicSphere(Vector3{ startX, sphereSpawnY, startZ }, 1.2f, 50.0f);
-
-    // 10. Phase 4: Physics-Weighted 3D Dijkstra Solver with Snapshot History
+    // 6. Physics-Weighted 3D Dijkstra Solver with Snapshot History
     DijkstraSolver3D dijkstra;
     int currentPresetIndex = 0;
     dijkstra.applyPreset(currentPresetIndex);
-    dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
-                              navGraph.getVertices(), navGraph.getBlockedEdgesMap());
 
-    // 11. Phase 5: Autonomous Planetary Rover Rig & Telemetry
+    // 7. Planetary Rover Rig
     PlanetaryRover rover;
-    if (navGraph.getStartNode()) {
-        rover.init(physics, navGraph.getStartNode()->position);
-        rover.setPath(dijkstra.getShortestPathNodes());
-    }
+
+    // 8. Initialize Default Scenario (The Olympus Crater)
+    int blockedEdgeCount = 0;
+    ApplyTerrainPreset(TerrainPreset::OLYMPUS_CRATER, terrain, physics, navGraph, dijkstra, rover, blockedEdgeCount);
+
+    // Initial rolling test sphere on slope
+    physics.spawnDynamicSphere(Vector3{ 20.0f, terrain.getHeight(20.0f, -10.0f) + 6.0f, -10.0f }, 1.2f, 50.0f);
 
     // Display options
     bool showTerrain = true;
@@ -145,7 +187,7 @@ int main() {
     // Distant Martian pale blue sun position
     Vector3 sunPosition = { 160.0f, 110.0f, -130.0f };
 
-    // 12. Main Simulation Loop
+    // 9. Main Simulation Loop
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
         if (dt > 0.05f) dt = 0.05f;
@@ -215,8 +257,12 @@ int main() {
         }
 
         // Phase 5: Planetary Rover Driving Controls
-        if (IsKeyPressed(KEY_D)) {
+        if (IsKeyPressed(KEY_TAB) || IsKeyPressed(KEY_F)) {
             rover.toggleAutonomous();
+        }
+        if (IsKeyPressed(KEY_M)) {
+            terrain.cyclePreset();
+            ApplyTerrainPreset(terrain.getPreset(), terrain, physics, navGraph, dijkstra, rover, blockedEdgeCount);
         }
         if (IsKeyPressed(KEY_V)) {
             rover.cycleCameraMode();
@@ -417,6 +463,7 @@ int main() {
         if (showHUD) {
             int screenW = GetScreenWidth();
             int screenH = GetScreenHeight();
+            Vector2 mousePos = GetMousePosition();
 
             // ----------------------------------------------------
             // 1. TOP-LEFT: Mission Status & Telemetry HUD Card
@@ -424,7 +471,7 @@ int main() {
             int hudX = 16;
             int hudY = 16;
             int hudW = 440;
-            int hudH = 310;
+            int hudH = 326;
             Rectangle hudRect = { (float)hudX, (float)hudY, (float)hudW, (float)hudH };
             DrawRectangleRounded(hudRect, 0.04f, 4, ColorAlpha(Color{ 10, 14, 24, 255 }, 0.92f));
             DrawRectangleRoundedLines(hudRect, 0.04f, 4, Color{ 48, 68, 98, 255 });
@@ -433,29 +480,45 @@ int main() {
             DrawText("MARTIAN ROVER MISSION TELEMETRY", hudX + 16, hudY + 14, 13, RAYWHITE);
             DrawText("Phase 5: Autonomous Planetary Rover & Telemetry HUD", hudX + 16, hudY + 32, 11, Color{ 145, 175, 205, 255 });
 
-            // FPS & Physics Sub-step Badges
-            int curFPS = GetFPS();
-            Color fpsColor = (curFPS >= 55) ? Color{ 46, 204, 113, 255 } : Color{ 241, 196, 15, 255 };
-            DrawText(TextFormat("FPS: %i", curFPS), hudX + hudW - 75, hudY + 14, 12, fpsColor);
-            DrawText("60Hz Step", hudX + hudW - 75, hudY + 30, 10, Color{ 52, 152, 219, 255 });
+            // Clickable [H] Hide HUD button
+            Rectangle hideBtnRect = { (float)(hudX + hudW - 85), (float)(hudY + 12), 70.0f, 18.0f };
+            bool hideHovered = CheckCollisionPointRec(mousePos, hideBtnRect);
+            DrawRectangleRounded(hideBtnRect, 0.35f, 4, hideHovered ? Color{ 40, 56, 80, 255 } : Color{ 24, 34, 50, 220 });
+            DrawRectangleRoundedLines(hideBtnRect, 0.35f, 4, hideHovered ? Color{ 100, 160, 240, 255 } : Color{ 60, 85, 120, 200 });
+            DrawText("[H] Hide", hudX + hudW - 77, hudY + 16, 10, Color{ 200, 225, 255, 255 });
+            if (hideHovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                showHUD = false;
+            }
 
-            DrawLine(hudX + 16, hudY + 48, hudX + hudW - 16, hudY + 48, Color{ 35, 48, 70, 255 });
+            // Row 1: Interactive Terrain Mode Switcher [M]
+            Rectangle tmRect = { (float)(hudX + 16), (float)(hudY + 52), (float)(hudW - 32), 22.0f };
+            bool tmHovered = CheckCollisionPointRec(mousePos, tmRect);
+            DrawRectangleRounded(tmRect, 0.25f, 4, tmHovered ? Color{ 36, 52, 78, 255 } : Color{ 20, 28, 44, 255 });
+            DrawRectangleRoundedLines(tmRect, 0.25f, 4, tmHovered ? Color{ 90, 170, 255, 255 } : Color{ 50, 75, 110, 255 });
+            DrawText(TextFormat("TERRAIN MODE [M]: %s", terrain.getPresetName()), hudX + 24, hudY + 57, 11, Color{ 100, 215, 255, 255 });
+            DrawText("[Click / M to Cycle]", hudX + hudW - 130, hudY + 58, 9, Color{ 150, 175, 205, 255 });
+            if (tmHovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                terrain.cyclePreset();
+                ApplyTerrainPreset(terrain.getPreset(), terrain, physics, navGraph, dijkstra, rover, blockedEdgeCount);
+            }
 
-            // Row 1: Active Cost Preset & Parameters
+            DrawLine(hudX + 16, hudY + 82, hudX + hudW - 16, hudY + 82, Color{ 35, 48, 70, 255 });
+
+            // Row 2: Active Cost Preset & Parameters
             const auto& w = dijkstra.getWeights();
-            DrawText(TextFormat("Preset [%d]: %s", currentPresetIndex + 1, w.name.c_str()), 
-                hudX + 16, hudY + 56, 11, Color{ 100, 200, 255, 255 });
+            DrawText(TextFormat("Cost Preset [%d]: %s", currentPresetIndex + 1, w.name.c_str()), 
+                hudX + 16, hudY + 90, 11, Color{ 240, 200, 80, 255 });
             DrawText(TextFormat("Weights: alpha=%.1f (Work) | beta=%.1f (Slip) | gamma=%.1f | delta=%.1f", 
-                w.alpha, w.beta, w.gamma, w.delta), hudX + 16, hudY + 72, 10, Color{ 160, 175, 195, 255 });
+                w.alpha, w.beta, w.gamma, w.delta), hudX + 16, hudY + 106, 10, Color{ 160, 175, 195, 255 });
 
-            DrawLine(hudX + 16, hudY + 88, hudX + hudW - 16, hudY + 88, Color{ 35, 48, 70, 255 });
+            DrawLine(hudX + 16, hudY + 122, hudX + hudW - 16, hudY + 122, Color{ 35, 48, 70, 255 });
 
-            // Row 2: Physics & NavGraph Infrastructure Telemetry
+            // Row 3: Physics & NavGraph Infrastructure Telemetry
             DrawText(TextFormat("Jolt Engine: %d Boulders | %d Cut Edges | Gravity: %.2f m/s²",
                 (int)physics.getBoulders().size(), blockedEdgeCount, physics.getGravity()),
-                hudX + 16, hudY + 96, 11, RAYWHITE);
+                hudX + 16, hudY + 130, 11, RAYWHITE);
 
-            // Row 3: Dijkstra Navigation Solution Status
+            // Row 4: Dijkstra Navigation Solution Status
             size_t stepIdx = dijkstra.getCurrentStepIndex();
             size_t totalSteps = dijkstra.getTotalSteps();
             const auto& stats = dijkstra.getPathStats();
@@ -463,100 +526,96 @@ int main() {
             if (dijkstra.isPlaying()) {
                 float pct = (totalSteps > 0) ? (static_cast<float>(stepIdx) / totalSteps * 100.0f) : 0.0f;
                 DrawText(TextFormat("STATUS: [REPLAYING STEP %zu / %zu (%.0f%%)]", stepIdx + 1, totalSteps, pct), 
-                    hudX + 16, hudY + 116, 12, GOLD);
+                    hudX + 16, hudY + 150, 12, GOLD);
             } else if (dijkstra.isPathFound()) {
                 DrawText(TextFormat("STATUS: [OPTIMAL ROUTE SOLVED in %.2f ms]", stats.computeTimeMs), 
-                    hudX + 16, hudY + 116, 12, Color{ 46, 204, 113, 255 });
+                    hudX + 16, hudY + 150, 12, Color{ 46, 204, 113, 255 });
             } else {
                 DrawText("STATUS: [NO TRAVERSABLE PATH - SLIP / BOULDER BLOCKED]", 
-                    hudX + 16, hudY + 116, 12, Color{ 255, 95, 95, 255 });
+                    hudX + 16, hudY + 150, 12, Color{ 255, 95, 95, 255 });
             }
 
-            // Row 4: Route Metrics
+            // Row 5: Route Metrics
             if (stats.isValid) {
                 DrawText(TextFormat("3D Distance: %.1f m   |   Physical Energy: %.1f J-equiv", 
-                    stats.totalDistance, stats.totalEnergyCost), hudX + 16, hudY + 138, 11, RAYWHITE);
+                    stats.totalDistance, stats.totalEnergyCost), hudX + 16, hudY + 172, 11, RAYWHITE);
                 DrawText(TextFormat("Waypoints: %d nodes    |   Max Route Slope: %.1f°", 
-                    stats.waypointCount, stats.maxSlopeDeg), hudX + 16, hudY + 156, 11, RAYWHITE);
+                    stats.waypointCount, stats.maxSlopeDeg), hudX + 16, hudY + 190, 11, RAYWHITE);
                 DrawText(TextFormat("Elevation Profile: +%.1fm climb  /  -%.1fm descent", 
-                    stats.elevationGain, stats.elevationLoss), hudX + 16, hudY + 174, 11, Color{ 180, 200, 220, 255 });
+                    stats.elevationGain, stats.elevationLoss), hudX + 16, hudY + 208, 11, Color{ 180, 200, 220, 255 });
             } else {
                 DrawText("Target destination is unreachable with current physical constraints.", 
-                    hudX + 16, hudY + 138, 11, Color{ 255, 140, 140, 255 });
+                    hudX + 16, hudY + 172, 11, Color{ 255, 140, 140, 255 });
             }
 
-            DrawLine(hudX + 16, hudY + 194, hudX + hudW - 16, hudY + 194, Color{ 35, 48, 70, 255 });
+            DrawLine(hudX + 16, hudY + 226, hudX + hudW - 16, hudY + 226, Color{ 35, 48, 70, 255 });
 
             // Waypoints & Interactive Picking Telemetry
-            DrawCircle(hudX + 22, hudY + 208, 5, GraphRenderer3D::getNodeColor(NodeState::START));
+            DrawCircle(hudX + 22, hudY + 240, 5, GraphRenderer3D::getNodeColor(NodeState::START));
             std::string startInfo = navGraph.getStartNode() 
                 ? TextFormat("Start: %s  (y=%.1fm, slope=%.1f°)", 
                     navGraph.getStartNode()->name.c_str(), 
                     navGraph.getStartNode()->position.y,
                     navGraph.getStartNode()->slopeAngleRad * RAD2DEG)
                 : "Start: None [Left Click to set]";
-            DrawText(startInfo.c_str(), hudX + 34, hudY + 203, 11, RAYWHITE);
+            DrawText(startInfo.c_str(), hudX + 34, hudY + 235, 11, RAYWHITE);
 
-            DrawCircle(hudX + 22, hudY + 228, 5, GraphRenderer3D::getNodeColor(NodeState::END));
+            DrawCircle(hudX + 22, hudY + 260, 5, GraphRenderer3D::getNodeColor(NodeState::END));
             std::string endInfo = navGraph.getEndNode() 
                 ? TextFormat("End:   %s  (y=%.1fm, slope=%.1f°)", 
                     navGraph.getEndNode()->name.c_str(), 
                     navGraph.getEndNode()->position.y,
                     navGraph.getEndNode()->slopeAngleRad * RAD2DEG)
                 : "End:   None [Shift + Left Click to set]";
-            DrawText(endInfo.c_str(), hudX + 34, hudY + 223, 11, RAYWHITE);
+            DrawText(endInfo.c_str(), hudX + 34, hudY + 255, 11, RAYWHITE);
 
-            // Row 5: Current Replay Step Message
-            const auto& snap = dijkstra.getCurrentSnapshot();
-            DrawText(snap.message.c_str(), hudX + 16, hudY + 252, 11, GOLD);
-
-            // Row 6: Replay Scrubbing Progress Bar
+            // Replay Scrubbing Progress Bar
             int barW = hudW - 32;
             int barH = 6;
             int barX = hudX + 16;
-            int barY = hudY + 278;
+            int barY = hudY + 284;
             DrawRectangle(barX, barY, barW, barH, Color{ 25, 35, 52, 255 });
             float progress = (totalSteps > 1) ? (static_cast<float>(stepIdx) / (totalSteps - 1)) : 1.0f;
             DrawRectangle(barX, barY, static_cast<int>(barW * progress), barH, Color{ 46, 204, 113, 255 });
             DrawCircle(barX + static_cast<int>(barW * progress), barY + 3, 5, WHITE);
-            DrawText(TextFormat("Step %zu of %zu", stepIdx + 1, totalSteps), 
-                hudX + 16, hudY + 290, 10, Color{ 140, 155, 175, 255 });
+            DrawText(TextFormat("Step %zu of %zu  |  FPS: %i", stepIdx + 1, totalSteps, GetFPS()), 
+                hudX + 16, hudY + 298, 10, Color{ 140, 155, 175, 255 });
 
             // ----------------------------------------------------
             // 2. BOTTOM-LEFT: NavGraph & Routing Legend Card
             // ----------------------------------------------------
             int legW = 440;
-            int legH = 92;
+            int legH = 88;
             int legX = 16;
-            int legY = hudY + hudH + 10;
+            int legY = hudY + hudH + 8;
             Rectangle legRect = { (float)legX, (float)legY, (float)legW, (float)legH };
             DrawRectangleRounded(legRect, 0.05f, 4, ColorAlpha(Color{ 10, 14, 24, 255 }, 0.92f));
             DrawRectangleRoundedLines(legRect, 0.05f, 4, Color{ 48, 68, 98, 255 });
             DrawRectangle(legX + 1, legY + 1, legW - 2, 2, Color{ 46, 204, 113, 255 });
 
-            DrawText("NAVGRAPH & DIJKSTRA ROUTING LEGEND", legX + 16, legY + 10, 11, RAYWHITE);
-            DrawLine(legX + 16, legY + 26, legX + legW - 16, legY + 26, Color{ 35, 48, 70, 255 });
+            DrawText("NAVGRAPH & DIJKSTRA ROUTING LEGEND", legX + 16, legY + 9, 11, RAYWHITE);
+            DrawLine(legX + 16, legY + 24, legX + legW - 16, legY + 24, Color{ 35, 48, 70, 255 });
 
             // Column 1
-            DrawRectangle(legX + 16, legY + 36, 14, 4, Color{ 46, 204, 113, 255 });
-            DrawText("Shortest Path Conduit", legX + 36, legY + 32, 10, Color{ 180, 255, 200, 255 });
+            DrawRectangle(legX + 16, legY + 34, 14, 4, Color{ 46, 204, 113, 255 });
+            DrawText("Shortest Path Conduit", legX + 36, legY + 30, 10, Color{ 180, 255, 200, 255 });
 
-            DrawCircle(legX + 23, legY + 54, 4, GOLD);
-            DrawText("Active Node u (Settling)", legX + 36, legY + 49, 10, GOLD);
+            DrawCircle(legX + 23, legY + 52, 4, GOLD);
+            DrawText("Active Node u (Settling)", legX + 36, legY + 47, 10, GOLD);
 
-            DrawRectangle(legX + 16, legY + 70, 14, 3, Color{ 0, 240, 255, 255 });
-            DrawText("Examining Edge (u -> v)", legX + 36, legY + 65, 10, Color{ 0, 240, 255, 255 });
+            DrawRectangle(legX + 16, legY + 68, 14, 3, Color{ 0, 240, 255, 255 });
+            DrawText("Examining Edge (u -> v)", legX + 36, legY + 63, 10, Color{ 0, 240, 255, 255 });
 
             // Column 2
             int legCol2X = legX + 225;
-            DrawCircle(legCol2X + 7, legY + 36, 4, Color{ 52, 152, 219, 255 });
-            DrawText("Settled Node", legCol2X + 20, legY + 32, 10, RAYWHITE);
+            DrawCircle(legCol2X + 7, legY + 34, 4, Color{ 52, 152, 219, 255 });
+            DrawText("Settled Node", legCol2X + 20, legY + 30, 10, RAYWHITE);
 
-            DrawRectangle(legCol2X, legY + 52, 14, 3, Color{ 240, 45, 45, 255 });
-            DrawText("Blocked by Boulder Cut", legCol2X + 20, legY + 49, 10, Color{ 255, 120, 120, 255 });
+            DrawRectangle(legCol2X, legY + 50, 14, 3, Color{ 240, 45, 45, 255 });
+            DrawText("Blocked by Boulder Cut", legCol2X + 20, legY + 47, 10, Color{ 255, 120, 120, 255 });
 
-            DrawCircle(legCol2X + 7, legY + 70, 4, GraphRenderer3D::getNodeColor(NodeState::START));
-            DrawText("Start / End Beacons", legCol2X + 20, legY + 65, 10, RAYWHITE);
+            DrawCircle(legCol2X + 7, legY + 68, 4, GraphRenderer3D::getNodeColor(NodeState::START));
+            DrawText("Start / End Beacons", legCol2X + 20, legY + 63, 10, RAYWHITE);
 
             // ----------------------------------------------------
             // 3. TOP-RIGHT: Planetary Rover Flight Telemetry HUD
@@ -588,33 +647,50 @@ int main() {
             int c2X = deckX + 16 + static_cast<int>(colW);
             DrawLine(c2X - 12, deckY + 10, c2X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
             DrawText("ROVER NAVIGATION", c2X, deckY + 10, 10, Color{ 46, 204, 113, 255 });
-            DrawKeyBind(c2X, deckY + 28, "D", rover.isAutonomous() ? "Pause Auto" : "Auto Drive");
+            DrawKeyBind(c2X, deckY + 28, "Tab / F", rover.isAutonomous() ? "Pause Auto" : "Auto Drive");
             DrawKeyBind(c2X + 130, deckY + 28, "WASD", "Manual Steer");
             DrawKeyBind(c2X, deckY + 54, "R", "Reset Rover");
             DrawKeyBind(c2X + 130, deckY + 54, "G", (physics.getGravity() < -6.0f) ? "Grav: Earth" : "Grav: Mars");
 
-            // --- Column 3: Dijkstra Algorithm ---
+            // --- Column 3: Terrain & Dijkstra ---
             int c3X = deckX + 16 + static_cast<int>(colW * 2);
             DrawLine(c3X - 12, deckY + 10, c3X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
-            DrawText("DIJKSTRA REPLAY & PRESETS", c3X, deckY + 10, 10, Color{ 241, 196, 15, 255 });
-            DrawKeyBind(c3X, deckY + 28, "P", dijkstra.isPlaying() ? "Pause" : "Play");
-            DrawKeyBind(c3X + 80, deckY + 28, "< / >", "Step");
-            DrawKeyBind(c3X + 165, deckY + 28, "Enter", "Finish");
-            DrawKeyBind(c3X, deckY + 54, "1-4", "Cost Presets (Std/Direct/Energy/Tract)");
+            DrawText("TERRAIN & DIJKSTRA", c3X, deckY + 10, 10, Color{ 241, 196, 15, 255 });
+            DrawKeyBind(c3X, deckY + 28, "M", "Terrain Mode");
+            DrawKeyBind(c3X + 115, deckY + 28, "1-4", "Cost Presets");
+            DrawKeyBind(c3X, deckY + 54, "P", dijkstra.isPlaying() ? "Pause" : "Play Replay");
+            DrawKeyBind(c3X + 115, deckY + 54, "Enter", "Finish Path");
 
-            // --- Column 4: Display & Visual Toggles ---
+            // --- Column 4: View & HUD Toggles ---
             int c4X = deckX + 16 + static_cast<int>(colW * 3);
             DrawLine(c4X - 12, deckY + 10, c4X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
-            DrawText("TERRAIN & VIEW TOGGLES", c4X, deckY + 10, 10, Color{ 190, 160, 240, 255 });
-            DrawKeyBind(c4X, deckY + 28, "T", "Terrain", showTerrain);
-            DrawKeyBind(c4X + 85, deckY + 28, "E", "Edges", showEdges);
-            DrawKeyBind(c4X + 165, deckY + 28, "N", "Nodes", showNodes);
-            DrawKeyBind(c4X, deckY + 54, "O", "Rocks", showBoulders);
+            DrawText("VIEW & HUD TOGGLES", c4X, deckY + 10, 10, Color{ 190, 160, 240, 255 });
+            DrawKeyBind(c4X, deckY + 28, "H", "Toggle HUD");
+            DrawKeyBind(c4X + 105, deckY + 28, "T", "Terrain");
+            DrawKeyBind(c4X, deckY + 54, "O", "Rocks");
             DrawKeyBind(c4X + 85, deckY + 54, "B", "Drop Rock");
-            DrawKeyBind(c4X + 165, deckY + 54, "H", "HUD", showHUD);
+            DrawKeyBind(c4X + 175, deckY + 54, "C", "Clear");
         } else {
-            // Minimalist badge when HUD is hidden
-            DrawKeyBind(GetScreenWidth() - 140, GetScreenHeight() - 32, "H", "Show HUD", true);
+            // Interactive floating button when HUD is hidden
+            int btnW = 150;
+            int btnH = 32;
+            int btnX = GetScreenWidth() - btnW - 16;
+            int btnY = 16;
+            Rectangle btnRect = { (float)btnX, (float)btnY, (float)btnW, (float)btnH };
+            Vector2 mPos = GetMousePosition();
+            bool isHovered = CheckCollisionPointRec(mPos, btnRect);
+
+            Color bg = isHovered ? Color{ 36, 52, 78, 240 } : Color{ 16, 22, 34, 210 };
+            Color border = isHovered ? Color{ 80, 160, 255, 255 } : Color{ 48, 70, 105, 220 };
+            DrawRectangleRounded(btnRect, 0.35f, 4, bg);
+            DrawRectangleRoundedLines(btnRect, 0.35f, 4, border);
+
+            DrawCircle(btnX + 16, btnY + 16, 4, Color{ 46, 204, 113, 255 });
+            DrawText("[H] SHOW HUD", btnX + 28, btnY + 10, 11, RAYWHITE);
+
+            if (isHovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                showHUD = true;
+            }
         }
 
         EndDrawing();

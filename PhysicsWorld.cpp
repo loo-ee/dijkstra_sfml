@@ -196,6 +196,13 @@ void PhysicsWorld::shutdown() {
 void PhysicsWorld::createTerrainHeightfield(const float* heightData, int cols, int rows, float spacing) {
     if (!m_initialized) return;
 
+    JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    if (!m_terrainBodyId.IsInvalid()) {
+        bodyInterface.RemoveBody(m_terrainBodyId);
+        bodyInterface.DestroyBody(m_terrainBodyId);
+        m_terrainBodyId = JPH::BodyID();
+    }
+
     float halfSize = (cols - 1) * spacing * 0.5f;
 
     JPH::HeightFieldShapeSettings shapeSettings(
@@ -222,8 +229,19 @@ void PhysicsWorld::createTerrainHeightfield(const float* heightData, int cols, i
     bodySettings.mFriction = 0.70f;
     bodySettings.mRestitution = 0.05f;
 
-    JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
     m_terrainBodyId = bodyInterface.CreateAndAddBody(bodySettings, JPH::EActivation::DontActivate);
+}
+
+void PhysicsWorld::clearBoulders() {
+    if (!m_initialized) return;
+    JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    for (const auto& b : m_boulders) {
+        if (!b.bodyId.IsInvalid()) {
+            bodyInterface.RemoveBody(b.bodyId);
+            bodyInterface.DestroyBody(b.bodyId);
+        }
+    }
+    m_boulders.clear();
 }
 
 void PhysicsWorld::spawnBoulder(Vector3 pos, float radius) {

@@ -100,10 +100,36 @@ void RoverNavGraph::generateTerrainGrid(const TerrainHeightfield& terrain, int g
         }
     }
 
-    // Set Default Start and End Nodes (opposite walkable corners)
+    // Set Default Start and End Nodes (nearest strictly walkable nodes to corners)
+    Vertex3D* bestStart = nullptr;
+    Vertex3D* bestEnd = nullptr;
+    float bestStartDist = 1e9f;
+    float bestEndDist = 1e9f;
+
     if (!m_vertices.empty()) {
-        setStartNode(m_vertices.front());
-        setEndNode(m_vertices.back());
+        Vector3 targetStart = m_vertices.front()->position;
+        Vector3 targetEnd   = m_vertices.back()->position;
+
+        for (Vertex3D* v : m_vertices) {
+            if (v->isWalkable) {
+                float dStart = Vector3Distance(v->position, targetStart);
+                if (dStart < bestStartDist) {
+                    bestStartDist = dStart;
+                    bestStart = v;
+                }
+                float dEnd = Vector3Distance(v->position, targetEnd);
+                if (dEnd < bestEndDist) {
+                    bestEndDist = dEnd;
+                    bestEnd = v;
+                }
+            }
+        }
+
+        if (bestStart) setStartNode(bestStart);
+        else setStartNode(m_vertices.front());
+
+        if (bestEnd && bestEnd != bestStart) setEndNode(bestEnd);
+        else setEndNode(m_vertices.back());
     }
 
     buildEdgeMeshes();
