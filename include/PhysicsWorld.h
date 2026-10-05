@@ -36,6 +36,17 @@ public:
     Vector3 getBodyPosition(JPH::BodyID bodyId) const;
     void clearDynamicSpheres();
 
+    // Vehicle Rigid Body & Dynamics
+    JPH::BodyID createChassisBody(Vector3 pos, Vector3 halfExtents, float mass);
+    void destroyBody(JPH::BodyID id);
+    void applyForceAtPosition(JPH::BodyID id, Vector3 force, Vector3 worldPos);
+    void applyTorque(JPH::BodyID id, Vector3 torque);
+    void getBodyTransform(JPH::BodyID id, Vector3& outPos, Quaternion& outRot) const;
+    Vector3 getBodyLinearVelocity(JPH::BodyID id) const;
+    Vector3 getPointVelocity(JPH::BodyID id, Vector3 worldPos) const;
+    void setGravity(float g);
+    float getGravity() const;
+
     // Queries
     bool raycast(Vector3 from, Vector3 to, Vector3* hitPoint = nullptr, Vector3* hitNormal = nullptr);
     bool checkSphereClearance(Vector3 center, float radius);

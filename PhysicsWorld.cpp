@@ -1,4 +1,5 @@
 #include "PhysicsWorld.h"
+#include <raymath.h>
 
 #include <Jolt/RegisterTypes.h>
 #include <Jolt/Core/Factory.h>
@@ -6,6 +7,8 @@
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
@@ -323,4 +326,84 @@ bool PhysicsWorld::checkSphereClearance(Vector3 center, float radius) {
         return false;
     }
     return true;
+}
+
+JPH::BodyID PhysicsWorld::createChassisBody(Vector3 pos, Vector3 halfExtents, float mass) {
+    if (!m_initialized) return JPH::BodyID();
+
+    JPH::ShapeRefC boxShape = new JPH::BoxShape(JPH::Vec3(halfExtents.x, halfExtents.y, halfExtents.z));
+    JPH::ShapeRefC offsetShape = new JPH::OffsetCenterOfMassShape(boxShape, JPH::Vec3(0.0f, -0.25f, 0.0f));
+
+    JPH::BodyCreationSettings settings(
+        offsetShape,
+        JPH::RVec3(pos.x, pos.y, pos.z),
+        JPH::Quat::sIdentity(),
+        JPH::EMotionType::Dynamic,
+        Layers::MOVING
+    );
+    settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+    settings.mMassPropertiesOverride.mMass = mass;
+    settings.mFriction = 0.65f;
+    settings.mRestitution = 0.05f;
+    settings.mLinearDamping = 0.08f;
+    settings.mAngularDamping = 0.35f;
+
+    JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    return bodyInterface.CreateAndAddBody(settings, JPH::EActivation::Activate);
+}
+
+void PhysicsWorld::destroyBody(JPH::BodyID id) {
+    if (id.IsInvalid() || !m_initialized) return;
+    JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    bodyInterface.RemoveBody(id);
+    bodyInterface.DestroyBody(id);
+}
+
+void PhysicsWorld::applyForceAtPosition(JPH::BodyID id, Vector3 force, Vector3 worldPos) {
+    if (id.IsInvalid() || !m_initialized) return;
+    JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    bodyInterface.AddForce(id, JPH::Vec3(force.x, force.y, force.z), JPH::RVec3(worldPos.x, worldPos.y, worldPos.z));
+}
+
+void PhysicsWorld::applyTorque(JPH::BodyID id, Vector3 torque) {
+    if (id.IsInvalid() || !m_initialized) return;
+    JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    bodyInterface.AddTorque(id, JPH::Vec3(torque.x, torque.y, torque.z));
+}
+
+void PhysicsWorld::getBodyTransform(JPH::BodyID id, Vector3& outPos, Quaternion& outRot) const {
+    if (id.IsInvalid() || !m_initialized) {
+        outPos = Vector3{ 0, 0, 0 };
+        outRot = QuaternionIdentity();
+        return;
+    }
+    const JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    JPH::RVec3 p = bodyInterface.GetCenterOfMassPosition(id);
+    JPH::Quat q = bodyInterface.GetRotation(id);
+    outPos = Vector3{ static_cast<float>(p.GetX()), static_cast<float>(p.GetY()), static_cast<float>(p.GetZ()) };
+    outRot = Quaternion{ q.GetX(), q.GetY(), q.GetZ(), q.GetW() };
+}
+
+Vector3 PhysicsWorld::getBodyLinearVelocity(JPH::BodyID id) const {
+    if (id.IsInvalid() || !m_initialized) return Vector3{ 0, 0, 0 };
+    const JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    JPH::Vec3 v = bodyInterface.GetLinearVelocity(id);
+    return Vector3{ v.GetX(), v.GetY(), v.GetZ() };
+}
+
+Vector3 PhysicsWorld::getPointVelocity(JPH::BodyID id, Vector3 worldPos) const {
+    if (id.IsInvalid() || !m_initialized) return Vector3{ 0, 0, 0 };
+    const JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    JPH::Vec3 v = bodyInterface.GetPointVelocity(id, JPH::RVec3(worldPos.x, worldPos.y, worldPos.z));
+    return Vector3{ v.GetX(), v.GetY(), v.GetZ() };
+}
+
+void PhysicsWorld::setGravity(float g) {
+    if (!m_initialized) return;
+    m_physicsSystem.SetGravity(JPH::Vec3(0.0f, g, 0.0f));
+}
+
+float PhysicsWorld::getGravity() const {
+    if (!m_initialized) return -3.71f;
+    return m_physicsSystem.GetGravity().GetY();
 }
