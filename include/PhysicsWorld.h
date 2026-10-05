@@ -53,7 +53,7 @@ public:
     float getGravity() const;
 
     // Queries
-    bool raycast(Vector3 from, Vector3 to, Vector3* hitPoint = nullptr, Vector3* hitNormal = nullptr);
+    bool raycast(Vector3 from, Vector3 to, Vector3* hitPoint = nullptr, Vector3* hitNormal = nullptr, JPH::BodyID ignoreBody = JPH::BodyID());
     bool checkSphereClearance(Vector3 center, float radius);
 
     // Accessors

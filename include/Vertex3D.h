@@ -24,8 +24,10 @@ struct Vertex3D {
     Vertex3D* parent = nullptr;
 
     // Physical attributes
+    Vector3 surfaceNormal = { 0.0f, 1.0f, 0.0f };
     float surfaceFriction = 0.6f;
     float slopeAngleRad = 0.0f;
+    float cliffProximity = 0.0f; // Clearance penalty for nodes adjacent to cliffs/drop-offs
     bool isWalkable = true;
 
     Vertex3D(const std::string& nodeName, Vector3 pos)

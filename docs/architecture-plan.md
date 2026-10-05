@@ -152,35 +152,43 @@ classDiagram
 
 ### Phase 1: Environment & Raylib 3D Foundation
 - [x] Install `raylib` via Homebrew (`brew install raylib`).
-- [ ] Configure `Makefile` with Raylib native macOS flags (`-lraylib -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo`).
-- [ ] Refactor `Vertex` into `Vertex3D` using Raylib's `Vector3` and `float` edge weights.
-- [ ] Initialize Raylib window with an active `Camera3D` orbital camera.
-- [ ] Verify that 3D nodes (`DrawSphere`) and edges (`DrawCylinderEx`) render smoothly at 60 FPS.
+- [x] Configure `Makefile` with Raylib native macOS flags (`-lraylib -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo`).
+- [x] Refactor `Vertex` into `Vertex3D` using Raylib's `Vector3` and `float` edge weights.
+- [x] Initialize Raylib window with an active `Camera3D` orbital camera.
+- [x] Verify that 3D nodes (`DrawSphere`) and edges (`DrawCylinderEx`) render smoothly at 60 FPS.
 
 ### Phase 2: Terrain Generation & Draped Graph
-- [ ] Generate procedural 3D heightfield mesh (`GenMeshHeightmap` or custom Perlin grid).
-- [ ] Snap graph nodes to terrain height: $\text{Node}_i = (x_i, h(x_i, z_i), z_i)$.
-- [ ] Implement Raylib 3D mouse picking (`GetMouseRay()`) to click-select Start and Goal nodes on the terrain.
+- [x] Generate procedural 3D heightfield mesh (`GenMeshHeightmap` or custom Perlin grid).
+- [x] Snap graph nodes to terrain height: $\text{Node}_i = (x_i, h(x_i, z_i), z_i)$.
+- [x] Implement Raylib 3D mouse picking (`GetMouseRay()`) to click-select Start and Goal nodes on the terrain.
 
 ### Phase 3: Physics Engine Integration (Jolt Physics)
-- [ ] Integrate **Jolt Physics** into the project.
-- [ ] Create `PhysicsWorld` wrapping Jolt's heightfield collision shape (`HeightFieldShape`).
-- [ ] Implement line-of-sight raycasts to detect obstacles between graph nodes.
+- [x] Integrate **Jolt Physics** into the project.
+- [x] Create `PhysicsWorld` wrapping Jolt's heightfield collision shape (`HeightFieldShape`).
+- [x] Implement line-of-sight raycasts to detect obstacles between graph nodes.
 
 ### Phase 4: Physics-Weighted Dijkstra Algorithm
-- [ ] Implement physical cost equations:
+- [x] Implement physical cost equations:
   - Gravity / Elevation work penalty ($\Delta y$).
   - Slope angle friction limits ($\tan\theta > \mu_s \implies \infty$).
   - Surface roughness / terrain material costs.
-- [ ] Retain step-by-step visual snapshot scrubbing (`stepForward`, `stepBackward`).
+- [x] Retain step-by-step visual snapshot scrubbing (`stepForward`, `stepBackward`).
 
 ### Phase 5: Planetary Rover Simulation & Telemetry HUD
-- [ ] Rig a 4-wheeled rover with chassis rigid body and suspension spring-dampers.
-- [ ] Implement the Pure Pursuit waypoint-following controller.
-- [ ] Integrate **rlImGui** to display:
+- [x] Rig a 4-wheeled rover with chassis rigid body and suspension spring-dampers.
+- [x] Implement the Pure Pursuit waypoint-following controller.
+- [x] Build immediate-mode telemetry HUD cards to display:
   - Battery consumption ($\text{kJ}$), speed, and rollover warning gauge.
-  - Interactive physics weight sliders ($\alpha, \beta, \gamma$).
-  - Algorithm playback controls.
+  - Interactive physics weight presets (Standard, Direct, Energy Saver, Safety First).
+  - Algorithm playback controls and realistic planetary gravities (Mars, Moon, Earth).
+
+### Phase 6: Machine Learning Terrain Traversability & Navigation (Next Phase)
+- [ ] Implement self-supervised data logger collecting edge transitions, motor work, and wheel slip.
+- [ ] Train a lightweight Physics-Informed Traversability MLP in PyTorch.
+- [ ] Export weights to header-only C++ forward pass (`TerrainTraversabilityMLP.h`) and ONNX.
+- [ ] Integrate into `DijkstraSolver3D` as Preset 5 ("Neural Network Traversability").
+- [ ] Display ML confidence, slip hazard warnings, and inference latency in `RoverTelemetryHUD`.
+*(See full design in [docs/ml-terrain-traversability-architecture.md](file:///Users/louie/Documents/GitHub/dijkstra_sfml/docs/ml-terrain-traversability-architecture.md))*
 
 ---
 

@@ -100,12 +100,20 @@ public:
     bool isHDCActive() const { return m_hdcActive; }
     bool isESPActive() const { return m_espActive; }
     bool isUnstuckActive() const { return m_unstuckActive; }
+    bool isReversing() const { return m_isReversing; }
+
+    // Dynamic Route Recalculation Requests
+    bool isReplanRequested() const { return m_replanRequested; }
+    const std::string& getReplanReason() const { return m_replanReason; }
+    Vector3 getHazardPos() const { return m_hazardPos; }
+    void clearReplanRequest() { m_replanRequested = false; }
+    void triggerReplan(const std::string& reason, Vector3 hazardPos = { 0, 0, 0 });
 
     // Instant recovery / self-righting
     void selfRight(PhysicsWorld& physics);
 
 private:
-    void updatePurePursuit(float dt);
+    void updatePurePursuit(PhysicsWorld& physics, float dt);
     void updateSuspensionAndTires(PhysicsWorld& physics, float dt);
     void updateAttitudeAndSensors(float dt);
 
@@ -146,6 +154,17 @@ private:
     bool m_unstuckActive;    // Anti-stuck wheel sweep & high-torque burst
     float m_stuckTimer;
     float m_unstuckTimer;
+
+    // Autonomous Reverse Gear & Maneuvering State
+    bool m_isReversing;
+    float m_reverseTimer;
+    float m_reverseCooldown;
+
+    // Route Recalculation Signals
+    bool m_replanRequested;
+    std::string m_replanReason;
+    Vector3 m_hazardPos;
+    float m_replanCooldown;
 
     // Autonomous Pure Pursuit State
     std::vector<Vector3> m_waypoints;

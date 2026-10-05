@@ -14,6 +14,7 @@ graph TD
     P3 --> P4
     P4 --> P5[Phase 5: Autonomous Rover & Telemetry HUD]
     P3 --> P5
+    P5 --> P6[Phase 6: Machine Learning Traversability & Navigation]
 ```
 
 ---
@@ -27,6 +28,7 @@ graph TD
 | **Phase 3** | [phase-3-physics-engine-integration.md](file:///Users/louie/Documents/GitHub/dijkstra_sfml/docs/phases/phase-3-physics-engine-integration.md) | Jolt Physics integration, `PhysicsWorld`, `HeightFieldShape`, static boulders, and dynamic edge-blocking raycasts. | Completed |
 | **Phase 4** | [phase-4-dijkstra-physics-cost.md](file:///Users/louie/Documents/GitHub/dijkstra_sfml/docs/phases/phase-4-dijkstra-physics-cost.md) | Physical work & traction cost functions, friction slip thresholds ($\tan\theta > \mu$), and 3D step-by-step snapshot replay. | Completed |
 | **Phase 5** | [phase-5-rover-simulation-and-telemetry.md](file:///Users/louie/Documents/GitHub/dijkstra_sfml/docs/phases/phase-5-rover-simulation-and-telemetry.md) | 4-wheel rover rigid body & suspension, Pure Pursuit waypoint navigation, `rlImGui` telemetry HUD, and preset scenarios. | Completed |
+| **Phase 6** | [phase-6-ml-traversability.md](file:///Users/louie/Documents/GitHub/dijkstra_sfml/docs/phases/phase-6-ml-traversability.md)<br>*(Spec: [ml-terrain-traversability-architecture.md](file:///Users/louie/Documents/GitHub/dijkstra_sfml/docs/ml-terrain-traversability-architecture.md))* | Learned physics-informed traversability MLP, self-supervised simulation data logging, ONNX / C++ inference, and ML route comparison. | Planned |
 
 ---
 

@@ -35,6 +35,13 @@ PlanetaryRover::PlanetaryRover()
     , m_unstuckActive(false)
     , m_stuckTimer(0.0f)
     , m_unstuckTimer(0.0f)
+    , m_isReversing(false)
+    , m_reverseTimer(0.0f)
+    , m_reverseCooldown(0.0f)
+    , m_replanRequested(false)
+    , m_replanReason("")
+    , m_hazardPos{ 0, 0, 0 }
+    , m_replanCooldown(0.0f)
     , m_currentWaypointIndex(0)
     , m_targetWaypoint{ 0, 0, 0 }
     , m_lookaheadDist(4.0f)
@@ -47,10 +54,10 @@ PlanetaryRover::PlanetaryRover()
 {
     // Mount positions in local chassis coordinate system:
     // Local: +X = Right, +Y = Up, +Z = Forward
-    m_wheels[0].mountOffset = Vector3{ -0.80f, -0.10f, +0.95f }; // Front-Left (FL)
-    m_wheels[1].mountOffset = Vector3{ +0.80f, -0.10f, +0.95f }; // Front-Right (FR)
-    m_wheels[2].mountOffset = Vector3{ -0.80f, -0.10f, -0.95f }; // Rear-Left (RL)
-    m_wheels[3].mountOffset = Vector3{ +0.80f, -0.10f, -0.95f }; // Rear-Right (RR)
+    m_wheels[0].mountOffset = Vector3{ -0.92f, -0.10f, +0.95f }; // Front-Left (FL)
+    m_wheels[1].mountOffset = Vector3{ +0.92f, -0.10f, +0.95f }; // Front-Right (FR)
+    m_wheels[2].mountOffset = Vector3{ -0.92f, -0.10f, -0.95f }; // Rear-Left (RL)
+    m_wheels[3].mountOffset = Vector3{ +0.92f, -0.10f, -0.95f }; // Rear-Right (RR)
 
     for (int i = 0; i < 4; ++i) {
         m_wheels[i].worldMountPos = Vector3{ 0, 0, 0 };
@@ -80,9 +87,17 @@ void PlanetaryRover::reset(PhysicsWorld& physics, Vector3 spawnPos, float yawAng
         m_chassisBodyId = JPH::BodyID();
     }
 
-    // Spawn slightly elevated so wheels cleanly drop onto suspension
-    Vector3 elevatedPos = spawnPos;
-    elevatedPos.y += 0.40f;
+    // Raycast down to find exact terrain surface and slope normal under spawn point
+    Vector3 hitGround = spawnPos;
+    Vector3 groundNormal = Vector3{ 0.0f, 1.0f, 0.0f };
+    Vector3 rayStart = Vector3{ spawnPos.x, spawnPos.y + 10.0f, spawnPos.z };
+    Vector3 rayEnd   = Vector3{ spawnPos.x, spawnPos.y - 10.0f, spawnPos.z };
+    physics.raycast(rayStart, rayEnd, &hitGround, &groundNormal);
+
+    // Ride height: chassis half-extent Y = 0.35m, mount offset Y = -0.10m,
+    // rest length = 0.48m, wheel radius = 0.40m, nominal sag = 0.15m.
+    // Uncompressed clearance: ~0.88m above terrain along normal ensures no ground penetration
+    Vector3 elevatedPos = Vector3Add(hitGround, Vector3Scale(groundNormal, 0.88f));
 
     m_chassisBodyId = physics.createChassisBody(elevatedPos, m_halfExtents, m_mass);
     Quaternion initRot = QuaternionFromAxisAngle(Vector3{ 0, 1, 0 }, yawAngleRad);
@@ -107,6 +122,13 @@ void PlanetaryRover::reset(PhysicsWorld& physics, Vector3 spawnPos, float yawAng
     m_unstuckActive = false;
     m_stuckTimer    = 0.0f;
     m_unstuckTimer  = 0.0f;
+    m_isReversing   = false;
+    m_reverseTimer  = 0.0f;
+    m_reverseCooldown = 0.0f;
+    m_replanRequested = false;
+    m_replanReason  = "";
+    m_hazardPos     = Vector3{ 0, 0, 0 };
+    m_replanCooldown = 0.0f;
     m_hasReachedGoal = false;
     m_currentWaypointIndex = 0;
 
@@ -203,11 +225,20 @@ void PlanetaryRover::update(PhysicsWorld& physics, float dt) {
 
     // 3. Autonomous Pure Pursuit guidance (if enabled)
     if (m_isAutonomous) {
-        updatePurePursuit(dt);
+        updatePurePursuit(physics, dt);
     }
 
     // 4. Raycast suspension, tire dynamics, TCS, and drive forces
     updateSuspensionAndTires(physics, dt);
+}
+
+void PlanetaryRover::triggerReplan(const std::string& reason, Vector3 hazardPos) {
+    if (m_replanCooldown <= 0.0f) {
+        m_replanRequested = true;
+        m_replanReason = reason;
+        m_hazardPos = hazardPos;
+        m_replanCooldown = 3.0f;
+    }
 }
 
 void PlanetaryRover::updateAttitudeAndSensors(float dt) {
@@ -228,10 +259,14 @@ void PlanetaryRover::updateAttitudeAndSensors(float dt) {
     m_odometerMeters += frameDist;
 }
 
-void PlanetaryRover::updatePurePursuit(float dt) {
+void PlanetaryRover::updatePurePursuit(PhysicsWorld& physics, float dt) {
+    if (m_replanCooldown > 0.0f) m_replanCooldown -= dt;
+    if (m_reverseCooldown > 0.0f) m_reverseCooldown -= dt;
+
     if (m_waypoints.empty()) {
         m_throttleInput = 0.0f;
         m_brakeInput = 1.0f;
+        m_isReversing = false;
         return;
     }
 
@@ -244,22 +279,134 @@ void PlanetaryRover::updatePurePursuit(float dt) {
         m_throttleInput = 0.0f;
         m_brakeInput = 1.0f;
         m_steerInput = 0.0f;
+        m_isReversing = false;
         return;
     }
 
-    // 1. Advance waypoint index if rover has arrived within 2.8m of current waypoint
+    // -------------------------------------------------------------
+    // Step 0: Real-Time Hazard & Blockade Detection
+    // -------------------------------------------------------------
+    bool hasBlockade = false;
+    bool hasSteepUphill = false;
+    Vector3 detectedHazardPos = { 0, 0, 0 };
+
+    // A. Forward bumper obstacle raycast (detects boulders directly in path)
+    Vector3 nosePos = Vector3Add(m_position, Vector3Scale(m_forward, m_halfExtents.z + 0.15f));
+    nosePos.y += 0.12f;
+    Vector3 bumperEnd = Vector3Add(nosePos, Vector3Scale(m_forward, 2.5f));
+    bumperEnd.y -= 0.08f;
+
+    Vector3 hitBumper, normBumper;
+    if (physics.raycast(nosePos, bumperEnd, &hitBumper, &normBumper, m_chassisBodyId)) {
+        float hitDist = Vector3Distance(nosePos, hitBumper);
+        if (hitDist < 2.2f && normBumper.y < 0.38f) {
+            hasBlockade = true;
+            detectedHazardPos = hitBumper;
+        }
+    }
+
+    // B. Terrain probe 2.6m ahead: check for impassable slope / flip hazard (> 22 deg)
+    Vector3 probeAhead = Vector3Add(m_position, Vector3Scale(m_forward, 2.6f));
+    Vector3 probeHit, probeNormal;
+    if (physics.raycast(Vector3{ probeAhead.x, probeAhead.y + 4.0f, probeAhead.z },
+                        Vector3{ probeAhead.x, probeAhead.y - 4.0f, probeAhead.z },
+                        &probeHit, &probeNormal, m_chassisBodyId)) {
+        float deltaY = probeHit.y - m_position.y;
+        float slopeAngleDeg = atan2f(deltaY, 2.6f) * RAD2DEG;
+        float normalTiltDeg = acosf(Clamp(probeNormal.y, -1.0f, 1.0f)) * RAD2DEG;
+
+        // Uphill slope > 22 deg or ground surface normal tilt > 25 deg threatens rollover
+        if (slopeAngleDeg > 22.0f || (deltaY > 0.65f && normalTiltDeg > 25.0f)) {
+            hasSteepUphill = true;
+            detectedHazardPos = probeHit;
+        }
+    }
+
+    // C. Current pitch rollover hazard: climbing steep slope (> 20 deg) and stalled
+    if (m_pitchDeg > 20.0f && fabsf(m_speed) < 0.15f && m_throttleInput > 0.25f) {
+        hasSteepUphill = true;
+        detectedHazardPos = Vector3Add(m_position, Vector3Scale(m_forward, 1.8f));
+    }
+
+    // -------------------------------------------------------------
+    // Step 1: Autonomous Reverse Gear Maneuver
+    // -------------------------------------------------------------
+    if ((hasBlockade || hasSteepUphill) && !m_isReversing && m_reverseCooldown <= 0.0f) {
+        m_isReversing = true;
+        m_reverseTimer = 1.8f; // Reverse for 1.8 seconds (~2-3m back)
+        m_reverseCooldown = 4.5f;
+    }
+
+    if (m_isReversing) {
+        m_reverseTimer -= dt;
+        m_throttleInput = -0.75f; // Active reverse gear
+        m_brakeInput = 0.0f;
+        m_steerInput = -0.30f;    // Counter-steer to pivot away from obstacle
+
+        if (m_reverseTimer <= 0.0f) {
+            m_isReversing = false;
+            m_throttleInput = 0.0f;
+            m_brakeInput = 1.0f;
+            // Backed up safely into clear terrain: trigger route recalculation!
+            triggerReplan(hasSteepUphill ? "UPHILL ROLLOVER RISK" : "OBSTACLE BLOCKADE", detectedHazardPos);
+        }
+        return;
+    }
+
+    // -------------------------------------------------------------
+    // Step 2: Intelligent Waypoint Progression & Skipping Missed Nodes
+    // -------------------------------------------------------------
     int totalWp = static_cast<int>(m_waypoints.size());
     while (m_currentWaypointIndex < totalWp - 1) {
-        float d = Vector2Distance(Vector2{ m_position.x, m_position.z }, 
-                                  Vector2{ m_waypoints[m_currentWaypointIndex].x, m_waypoints[m_currentWaypointIndex].z });
-        if (d < 3.2f) {
+        Vector3 curWp = m_waypoints[m_currentWaypointIndex];
+        Vector3 nextWp = m_waypoints[m_currentWaypointIndex + 1];
+
+        Vector2 curToRover = { m_position.x - curWp.x, m_position.z - curWp.z };
+        Vector2 segVec = { nextWp.x - curWp.x, nextWp.z - curWp.z };
+        float segLenSq = segVec.x * segVec.x + segVec.y * segVec.y;
+
+        float distToCur = Vector2Length(curToRover);
+        float distToNext = Vector2Distance(Vector2{ m_position.x, m_position.z }, Vector2{ nextWp.x, nextWp.z });
+
+        bool shouldAdvance = false;
+
+        // Condition A: Inside arrival tolerance
+        if (distToCur < 3.2f) {
+            shouldAdvance = true;
+        }
+        // Condition B: Rover has passed perpendicular plane of waypoint along trajectory segment
+        else if (segLenSq > 0.01f) {
+            float proj = (curToRover.x * segVec.x + curToRover.y * segVec.y) / segLenSq;
+            // If forward progress along segment exceeds 60%, or rover is closer to next waypoint:
+            if (proj > 0.60f || distToNext < distToCur * 0.85f) {
+                shouldAdvance = true;
+            }
+        }
+
+        if (shouldAdvance) {
             m_currentWaypointIndex++;
         } else {
             break;
         }
     }
 
-    // 2. Select lookahead waypoint w_k at distance ~ L_d (4.0m)
+    // Forward Proximity Shortcut: if displaced off-path and closer to an upcoming forward waypoint
+    for (int j = m_currentWaypointIndex + 1; j < std::min(m_currentWaypointIndex + 4, totalWp); ++j) {
+        Vector3 fw = m_waypoints[j];
+        Vector3 toFw = Vector3Subtract(fw, m_position);
+        float dotFwd = Vector3DotProduct(toFw, m_forward);
+        float distFw = Vector2Distance(Vector2{ m_position.x, m_position.z }, Vector2{ fw.x, fw.z });
+        float distCur = Vector2Distance(Vector2{ m_position.x, m_position.z }, 
+                                        Vector2{ m_waypoints[m_currentWaypointIndex].x, m_waypoints[m_currentWaypointIndex].z });
+        if (distFw < distCur && dotFwd > 0.5f) {
+            m_currentWaypointIndex = j;
+            break;
+        }
+    }
+
+    // -------------------------------------------------------------
+    // Step 3: Pure Pursuit Lookahead Target & Guidance
+    // -------------------------------------------------------------
     m_lookaheadDist = 4.0f;
     int targetIdx = m_currentWaypointIndex;
     for (int i = m_currentWaypointIndex; i < totalWp; ++i) {
@@ -272,48 +419,64 @@ void PlanetaryRover::updatePurePursuit(float dt) {
     }
     m_targetWaypoint = m_waypoints[targetIdx];
 
-    // 3. Compute vector to lookahead target in rover local frame
+    // Compute target vector in local rover frame
     Vector3 toTarget = Vector3Subtract(m_targetWaypoint, m_position);
     float localX = Vector3DotProduct(toTarget, m_right);
     float localZ = Vector3DotProduct(toTarget, m_forward);
     m_crossTrackError = localX;
 
-    // Angle alpha between heading and target
-    float alpha = atan2f(localX, fmaxf(0.1f, localZ));
+    // Off-path trigger: if cross track error is severe (> 6.5m), trigger replan
+    if (fabsf(m_crossTrackError) > 6.5f && distToGoal > 8.0f) {
+        triggerReplan("OFF-PATH DEVIATION", m_targetWaypoint);
+    }
+
+    // Prevent backtracking: if lookahead target is behind rover, advance index
+    if (localZ < -1.0f && m_currentWaypointIndex < totalWp - 1) {
+        m_currentWaypointIndex++;
+        m_targetWaypoint = m_waypoints[m_currentWaypointIndex];
+        toTarget = Vector3Subtract(m_targetWaypoint, m_position);
+        localX = Vector3DotProduct(toTarget, m_right);
+        localZ = Vector3DotProduct(toTarget, m_forward);
+    }
 
     // Pure Pursuit Steering Curvature: kappa = 2*sin(alpha)/Ld
-    // Steering angle: delta = atan(kappa * L) where L = wheelbase ~ 1.9m
+    float alpha = atan2f(localX, fmaxf(0.1f, localZ));
     const float wheelbase = 1.90f;
     float targetSteer = atan2f(2.0f * wheelbase * sinf(alpha), m_lookaheadDist);
     targetSteer = Clamp(targetSteer, -0.62f, 0.62f); // Max ~35 deg steering lock
 
-    // Smooth steering rate limiter (prevents sudden tire jerk)
-    float steerRate = 3.5f;
+    // Speed-dependent steering lock reduction
+    float speedFactor = Clamp(fabsf(m_speed) / 5.0f, 0.0f, 1.0f);
+    float maxSteerAtSpeed = Lerp(0.62f, 0.22f, speedFactor);
+    targetSteer = Clamp(targetSteer, -maxSteerAtSpeed, maxSteerAtSpeed);
+
+    // Smooth steering rate limiter
+    float steerRate = 2.8f;
     m_steerInput += Clamp(targetSteer - m_steerInput, -steerRate * dt, steerRate * dt);
 
-    // 4. Target speed regulation, Downhill Hill Descent Control (HDC), & Incline Assist
-    float cruiseSpeed = 4.2f; // ~15.1 km/h cruise
+    // -------------------------------------------------------------
+    // Step 4: Speed Regulation, Downhill HDC, & Anti-Stuck
+    // -------------------------------------------------------------
+    float cruiseSpeed = 3.8f; // ~13.7 km/h cruise
 
-    // Turn slowdown: modulate speed inversely with steer magnitude
-    float steerPenalty = 1.0f - 0.45f * (fabsf(m_steerInput) / 0.62f);
+    // Turn slowdown
+    float steerPenalty = 1.0f - 0.55f * (fabsf(m_steerInput) / 0.62f);
     cruiseSpeed *= steerPenalty;
 
-    // Deceleration ramp as we near the final destination
+    // Deceleration ramp as we near destination
     if (distToGoal < 7.0f) {
         cruiseSpeed *= fmaxf(0.2f, distToGoal / 7.0f);
     }
 
-    // Downhill Speed Governor & Slope Adaptation:
-    // When pitching down (descending a crater or scree slope), reduce target speed
+    // Downhill Speed Governor & Slope Adaptation
     m_hdcActive = false;
     if (m_pitchDeg < -2.0f) {
         float descentAngle = -m_pitchDeg;
-        // On a steep 25 deg descent, cruise speed automatically drops to ~1.8 m/s
         float descentFactor = Clamp(1.0f - (descentAngle / 28.0f) * 0.58f, 0.40f, 1.0f);
         cruiseSpeed *= descentFactor;
     }
 
-    // Incline Assist: if climbing uphill, boost torque to overcome gravity
+    // Incline Assist
     float inclineFactor = 1.0f;
     if (m_pitchDeg > 2.0f) {
         inclineFactor += 1.8f * fminf(1.0f, sinf(m_pitchDeg * DEG2RAD));
@@ -326,7 +489,6 @@ void PlanetaryRover::updatePurePursuit(float dt) {
         m_brakeInput = 0.0f;
     } else {
         m_throttleInput = 0.0f;
-        // Strong active braking if descending or overspeeding down slope
         float brakeGain = (m_pitchDeg < -2.0f) ? 0.95f : 0.65f;
         float downhillExtra = (m_pitchDeg < -2.0f) ? (-m_pitchDeg * 0.025f) : 0.0f;
         m_brakeInput = Clamp(-speedError * brakeGain + downhillExtra, 0.0f, 1.0f);
@@ -346,7 +508,11 @@ void PlanetaryRover::updatePurePursuit(float dt) {
             m_steerInput = Clamp(m_steerInput + wiggle, -0.62f, 0.62f);
             m_throttleInput = 1.0f; // Maximum torque burst
             m_brakeInput = 0.0f;
-            if (m_unstuckTimer > 2.5f) {
+            // If stuck continues, initiate reverse gear
+            if (m_unstuckTimer > 2.2f && !m_isReversing && m_reverseCooldown <= 0.0f) {
+                m_isReversing = true;
+                m_reverseTimer = 1.8f;
+                m_reverseCooldown = 4.0f;
                 m_stuckTimer = 0.0f;
                 m_unstuckTimer = 0.0f;
                 m_unstuckActive = false;
@@ -363,11 +529,16 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
     const float maxRayDist = m_suspensionRestLength + m_wheelRadius + 0.35f;
     m_tcsEngagedOverall = false;
 
+    // Speed-dependent steering lock reduction for manual mode too
+    float speedFactor = Clamp(fabsf(m_speed) / 5.0f, 0.0f, 1.0f);
+    float maxSteerAtSpeed = Lerp(0.62f, 0.22f, speedFactor);
+    float effectiveSteer = Clamp(m_steerInput, -maxSteerAtSpeed, maxSteerAtSpeed);
+
     // Apply front steering angles
-    m_wheels[0].steerAngle = m_steerInput; // FL
-    m_wheels[1].steerAngle = m_steerInput; // FR
-    m_wheels[2].steerAngle = 0.0f;         // RL
-    m_wheels[3].steerAngle = 0.0f;         // RR
+    m_wheels[0].steerAngle = effectiveSteer; // FL
+    m_wheels[1].steerAngle = effectiveSteer; // FR
+    m_wheels[2].steerAngle = 0.0f;           // RL
+    m_wheels[3].steerAngle = 0.0f;           // RR
 
     // Dynamically calculate corner weight and stiffness for current environment gravity
     float currentGravity = fabsf(physics.getGravity());
@@ -381,7 +552,7 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
     float mCorner = m_mass * 0.25f;
     float springDamping = 2.0f * 0.85f * sqrtf(springStiffness * mCorner);
     // Anti-roll bar stiffness dynamically scaled to corner weight
-    float arbStiffness = springStiffness * 0.35f;
+    float arbStiffness = springStiffness * 0.65f;
 
     // Maximum upward suspension force clamp (never exceeds 2.2x corner weight!)
     // This strictly prevents the suspension from launching the rover into the air.
@@ -403,7 +574,7 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
         Vector3 rayEnd = Vector3Add(w.worldMountPos, Vector3Scale(rayDir, maxRayDist));
 
         Vector3 hitPoint, hitNormal;
-        bool grounded = physics.raycast(w.worldMountPos, rayEnd, &hitPoint, &hitNormal);
+        bool grounded = physics.raycast(w.worldMountPos, rayEnd, &hitPoint, &hitNormal, m_chassisBodyId);
         w.isGrounded = grounded;
 
         if (grounded) {
@@ -444,12 +615,16 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
             float vLat  = Vector3DotProduct(wheelHubVel, tireRight);
 
             // Lateral Friction (Anti-skid cornering force)
-            float muLateral = 0.85f;
+            // Use proper tire cornering stiffness (~6x corner weight) instead of suspension spring rate
+            // to prevent excessive lateral force that generates rollover torque
+            float muLateral = 0.75f;
             float maxLatForce = springForceMag * muLateral;
-            float latGripMag = -vLat * (springStiffness * 0.85f);
+            float corneringStiffness = cornerWeight * 6.0f; // Realistic tire cornering coefficient
+            float latGripMag = -vLat * corneringStiffness;
             latGripMag = Clamp(latGripMag, -maxLatForce, maxLatForce);
             Vector3 lateralForceVec = Vector3Scale(tireRight, latGripMag);
-            physics.applyForceAtPosition(m_chassisBodyId, lateralForceVec, w.contactPoint);
+            // Apply lateral cornering force at wheel hub/axle to eliminate artificial rollover moment
+            physics.applyForceAtPosition(m_chassisBodyId, lateralForceVec, w.worldWheelPos);
 
             // Longitudinal Drive & Traction Control System (TCS)
             float nominalTireSpeed = w.angularVelocity * m_wheelRadius;
@@ -504,31 +679,51 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
     // Step 2: Anti-Roll Bar Stabilization (Front axle: 0-1, Rear axle: 2-3)
     float diffFront = m_wheels[0].suspensionCompression - m_wheels[1].suspensionCompression;
     float arbForceF = diffFront * arbStiffness;
-    physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, -arbForceF), m_wheels[0].worldMountPos);
-    physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, +arbForceF), m_wheels[1].worldMountPos);
+    arbForceF = Clamp(arbForceF, -cornerWeight * 0.75f, cornerWeight * 0.75f);
+    // Correct sign: if Left (0) is compressed more than Right (1), diffFront > 0.
+    // Left mount MUST be pushed UP (+m_up) and Right mount pulled DOWN (-m_up) to counteract roll!
+    physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, +arbForceF), m_wheels[0].worldMountPos);
+    physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, -arbForceF), m_wheels[1].worldMountPos);
 
     float diffRear = m_wheels[2].suspensionCompression - m_wheels[3].suspensionCompression;
     float arbForceR = diffRear * arbStiffness;
-    physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, -arbForceR), m_wheels[2].worldMountPos);
-    physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, +arbForceR), m_wheels[3].worldMountPos);
+    arbForceR = Clamp(arbForceR, -cornerWeight * 0.75f, cornerWeight * 0.75f);
+    physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, +arbForceR), m_wheels[2].worldMountPos);
+    physics.applyForceAtPosition(m_chassisBodyId, Vector3Scale(m_up, -arbForceR), m_wheels[3].worldMountPos);
 
     // Step 3: Active Electronic Stability Program (ESP)
-    // Damp excessive roll rate if bouncing, without fighting natural terrain slope
+    // Progressive angular velocity damping to prevent turn-induced rollover
     m_espActive = false;
     Vector3 angVel = physics.getBodyAngularVelocity(m_chassisBodyId);
     float angSpeed = Vector3Length(angVel);
-    if (angSpeed > 1.4f) {
-        Vector3 dampTorque = Vector3Scale(angVel, -m_mass * 1.8f);
+    if (angSpeed > 0.65f) {
+        // Progressive damping: stronger as angular velocity increases
+        float espGain = Clamp((angSpeed - 0.65f) / 1.5f, 0.0f, 1.0f);
+        float dampCoeff = m_mass * (2.0f + espGain * 6.0f);
+        Vector3 dampTorque = Vector3Scale(angVel, -dampCoeff);
         physics.applyTorque(m_chassisBodyId, dampTorque);
         m_espActive = true;
     }
 
-    // Step 4: Rollover Recovery (ONLY if completely flipped upside down)
-    if (m_up.y < -0.30f) {
+    // Step 4: Active Dynamic Anti-Rollover Assist & Self-Righting
+    // A. Active counter-torque when roll angle exceeds hazardous threshold (> 26 deg)
+    if (fabsf(m_rollDeg) > 26.0f) {
+        float rollRad = m_rollDeg * DEG2RAD;
+        float assistGain = Clamp((fabsf(m_rollDeg) - 26.0f) / 15.0f, 0.0f, 1.0f);
+        Vector3 rollRestore = Vector3Scale(m_forward, -sinf(rollRad) * (m_mass * 16.0f) * assistGain);
+        physics.applyTorque(m_chassisBodyId, rollRestore);
+        m_espActive = true;
+    }
+
+    // B. Critical Rollover Recovery: automatically rights rover if tipped onto side or upside down
+    if (m_up.y < 0.40f) {
         Vector3 worldUp = Vector3{ 0.0f, 1.0f, 0.0f };
         Vector3 rightingTorque = Vector3CrossProduct(m_up, worldUp);
-        physics.applyTorque(m_chassisBodyId, Vector3Scale(Vector3Normalize(rightingTorque), m_mass * 25.0f));
-        m_espActive = true;
+        float tLen = Vector3Length(rightingTorque);
+        if (tLen > 1e-3f) {
+            physics.applyTorque(m_chassisBodyId, Vector3Scale(rightingTorque, (m_mass * 35.0f) / tLen));
+            m_espActive = true;
+        }
     }
 
     // Step 5: Manual Mode Overspeed Governor (Intervenes if speed is unsafe down slope)
@@ -546,11 +741,15 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
 
 void PlanetaryRover::selfRight(PhysicsWorld& physics) {
     if (m_chassisBodyId.IsInvalid()) return;
-    Vector3 currentPos = m_position;
-    currentPos.y += 0.40f;
+    Vector3 hitGround = m_position;
+    Vector3 groundNormal = Vector3{ 0.0f, 1.0f, 0.0f };
+    physics.raycast(Vector3{ m_position.x, m_position.y + 10.0f, m_position.z },
+                    Vector3{ m_position.x, m_position.y - 10.0f, m_position.z },
+                    &hitGround, &groundNormal, m_chassisBodyId);
+    Vector3 rightedPos = Vector3Add(hitGround, Vector3Scale(groundNormal, 0.88f));
     float currentYaw = m_yawDeg * DEG2RAD;
     Quaternion uprightRot = QuaternionFromAxisAngle(Vector3{ 0, 1, 0 }, currentYaw);
-    physics.setBodyTransform(m_chassisBodyId, currentPos, uprightRot);
+    physics.setBodyTransform(m_chassisBodyId, rightedPos, uprightRot);
     physics.setBodyLinearVelocity(m_chassisBodyId, Vector3{ 0, 0, 0 });
     physics.setBodyAngularVelocity(m_chassisBodyId, Vector3{ 0, 0, 0 });
 }

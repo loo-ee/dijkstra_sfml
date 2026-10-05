@@ -32,6 +32,9 @@ public:
     void validateEdgesWithPhysics(PhysicsWorld& physics, float clearanceOffset = 0.6f);
     
     Vertex3D* getClosestNode(Vector3 worldPos);
+    Vertex3D* getClosestWalkableNode(Vector3 worldPos);
+    bool blockEdge(const std::string& nodeA, const std::string& nodeB);
+    bool blockEdgeBetweenPositions(Vector3 posA, Vector3 posB);
     Vertex3D* pickNodeFromRay(Ray mouseRay, float pickRadius = 2.0f);
 
     void setStartNode(Vertex3D* node);

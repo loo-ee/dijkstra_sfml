@@ -47,9 +47,11 @@ void RoverNavGraph::generateTerrainGrid(const TerrainHeightfield& terrain, int g
             Vertex3D* node = new Vertex3D(name, Vector3{ worldX, worldY, worldZ });
 
             // Slope angle and traversability properties
-            node->slopeAngleRad = terrain.getSlopeAngleRad(worldX, worldZ);
+            node->surfaceNormal = terrain.getNormal(worldX, worldZ);
+            node->slopeAngleRad = acosf(Clamp(node->surfaceNormal.y, -1.0f, 1.0f));
             node->surfaceFriction = 0.70f;
-            node->isWalkable = (node->slopeAngleRad < 32.0f * DEG2RAD);
+            // Realistic rover mobility limit: slopes >= 22 deg (~40% grade) are impassable
+            node->isWalkable = (node->slopeAngleRad < 22.0f * DEG2RAD);
 
             if (!node->isWalkable) {
                 node->state = NodeState::IMPASSABLE;
@@ -65,10 +67,41 @@ void RoverNavGraph::generateTerrainGrid(const TerrainHeightfield& terrain, int g
         return r * gridCols + c;
     };
 
-    // 2. Connect 8-Neighborhood (Cardinals + Diagonals)
     const int dc[] = { 1, -1, 0,  0, 1, -1,  1, -1 };
     const int dr[] = { 0,  0, 1, -1, 1,  1, -1, -1 };
 
+    // 1b. Cliff & Steep Drop-Off Proximity Buffer (Safety Standoff Margin)
+    for (int r = 0; r < gridRows; ++r) {
+        for (int c = 0; c < gridCols; ++c) {
+            Vertex3D* u = m_vertices[getIndex(c, r)];
+            if (!u->isWalkable) {
+                u->cliffProximity = 1.0f;
+                continue;
+            }
+            float maxAdjSlope = u->slopeAngleRad;
+            bool nextToCliff = false;
+            for (int i = 0; i < 8; ++i) {
+                int nc = c + dc[i];
+                int nr = r + dr[i];
+                if (nc >= 0 && nc < gridCols && nr >= 0 && nr < gridRows) {
+                    Vertex3D* v = m_vertices[getIndex(nc, nr)];
+                    if (!v->isWalkable || v->slopeAngleRad > 18.0f * DEG2RAD) {
+                        nextToCliff = true;
+                    }
+                    if (v->slopeAngleRad > maxAdjSlope) {
+                        maxAdjSlope = v->slopeAngleRad;
+                    }
+                }
+            }
+            if (nextToCliff) {
+                u->cliffProximity = 0.85f;
+            } else if (maxAdjSlope > 14.0f * DEG2RAD) {
+                u->cliffProximity = 0.40f;
+            }
+        }
+    }
+
+    // 2. Connect 8-Neighborhood (Cardinals + Diagonals)
     for (int r = 0; r < gridRows; ++r) {
         for (int c = 0; c < gridCols; ++c) {
             int uIdx = getIndex(c, r);
@@ -87,13 +120,13 @@ void RoverNavGraph::generateTerrainGrid(const TerrainHeightfield& terrain, int g
 
                     // Add unique undirected edge to rendering list
                     if (uIdx < vIdx) {
-                        Color edgeColor;
-                        if (!u->isWalkable || !v->isWalkable) {
-                            edgeColor = Color{ 70, 50, 50, 140 }; // Impassable slope connection
-                        } else {
-                            edgeColor = Color{ 90, 115, 145, 190 }; // Walkable nav route
+                        bool steep = (!u->isWalkable || !v->isWalkable);
+                        Color edgeColor = steep ? Color{ 220, 50, 50, 180 } : Color{ 90, 115, 145, 190 };
+                        m_edges.push_back({ u->position, v->position, edgeColor, steep, u->name, v->name });
+                        if (steep) {
+                            std::string key = (u->name < v->name) ? (u->name + "_" + v->name) : (v->name + "_" + u->name);
+                            m_blockedEdgesMap[key] = true;
                         }
-                        m_edges.push_back({ u->position, v->position, edgeColor, false, u->name, v->name });
                     }
                 }
             }
@@ -294,6 +327,15 @@ void RoverNavGraph::validateEdgesWithPhysics(PhysicsWorld& physics, float cleara
     m_blockedEdgesMap.clear();
 
     for (auto& edge : m_edges) {
+        std::string key = (edge.startNode < edge.endNode) ? 
+                          (edge.startNode + "_" + edge.endNode) : 
+                          (edge.endNode + "_" + edge.startNode);
+
+        if (edge.isBlocked) {
+            m_blockedEdgesMap[key] = true;
+            continue;
+        }
+
         Vector3 from = Vector3Add(edge.start, upOffset);
         Vector3 to = Vector3Add(edge.end, upOffset);
 
@@ -301,9 +343,6 @@ void RoverNavGraph::validateEdgesWithPhysics(PhysicsWorld& physics, float cleara
         if (physics.raycast(from, to, &hitPoint)) {
             edge.isBlocked = true;
             edge.color = Color{ 220, 45, 45, 230 }; // Impassable collision obstruction
-            std::string key = (edge.startNode < edge.endNode) ? 
-                              (edge.startNode + "_" + edge.endNode) : 
-                              (edge.endNode + "_" + edge.startNode);
             m_blockedEdgesMap[key] = true;
         }
     }
@@ -341,6 +380,50 @@ Vertex3D* RoverNavGraph::getClosestNode(Vector3 worldPos) {
 
     return bestNode;
 }
+
+Vertex3D* RoverNavGraph::getClosestWalkableNode(Vector3 worldPos) {
+    Vertex3D* bestNode = nullptr;
+    float minDistSq = std::numeric_limits<float>::max();
+
+    for (Vertex3D* v : m_vertices) {
+        if (!v->isWalkable) continue;
+        float dsq = Vector3DistanceSqr(worldPos, v->position);
+        if (dsq < minDistSq) {
+            minDistSq = dsq;
+            bestNode = v;
+        }
+    }
+
+    return bestNode ? bestNode : getClosestNode(worldPos);
+}
+
+bool RoverNavGraph::blockEdge(const std::string& nodeA, const std::string& nodeB) {
+    std::string key = (nodeA < nodeB) ? (nodeA + "_" + nodeB) : (nodeB + "_" + nodeA);
+    m_blockedEdgesMap[key] = true;
+    bool found = false;
+    for (auto& edge : m_edges) {
+        if ((edge.startNode == nodeA && edge.endNode == nodeB) ||
+            (edge.startNode == nodeB && edge.endNode == nodeA)) {
+            edge.isBlocked = true;
+            edge.color = Color{ 220, 50, 50, 200 };
+            found = true;
+        }
+    }
+    if (found) {
+        buildEdgeMeshes();
+    }
+    return found;
+}
+
+bool RoverNavGraph::blockEdgeBetweenPositions(Vector3 posA, Vector3 posB) {
+    Vertex3D* nA = getClosestNode(posA);
+    Vertex3D* nB = getClosestNode(posB);
+    if (nA && nB && nA != nB) {
+        return blockEdge(nA->name, nB->name);
+    }
+    return false;
+}
+
 
 void RoverNavGraph::setStartNode(Vertex3D* node) {
     if (!node) return;

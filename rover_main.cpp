@@ -131,10 +131,15 @@ static void ApplyTerrainPreset(
     dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(),
                               navGraph.getVertices(), navGraph.getBlockedEdgesMap());
 
-    // Reset Rover at valid start node
+    // Reset Rover at valid start node facing first path segment
     if (navGraph.getStartNode()) {
-        rover.reset(physics, navGraph.getStartNode()->position);
-        rover.setPath(dijkstra.getShortestPathNodes());
+        const auto& path = dijkstra.getShortestPathNodes();
+        float startYaw = 0.0f;
+        if (path.size() >= 2 && path[0] && path[1]) {
+            startYaw = atan2f(path[1]->position.x - path[0]->position.x, path[1]->position.z - path[0]->position.z);
+        }
+        rover.reset(physics, navGraph.getStartNode()->position, startYaw);
+        rover.setPath(path);
     }
 }
 
@@ -200,6 +205,34 @@ int main() {
 
         // Update Autonomous Planetary Rover & Pure Pursuit Navigation
         rover.update(physics, dt);
+
+        // Handle Autonomous Dynamic Route Recalculation (Hazard / Boulder Avoidance)
+        if (rover.isReplanRequested()) {
+            Vector3 roverPos = rover.getPosition();
+            Vertex3D* currentNearest = navGraph.getClosestWalkableNode(roverPos);
+
+            // Block the impassable edge if a specific hazard position was probed
+            Vector3 hazardPos = rover.getHazardPos();
+            if (Vector3LengthSqr(hazardPos) > 0.1f) {
+                if (navGraph.blockEdgeBetweenPositions(roverPos, hazardPos)) {
+                    // Update blocked edge count
+                    blockedEdgeCount = 0;
+                    for (const auto& e : navGraph.getEdges()) {
+                        if (e.isBlocked) blockedEdgeCount++;
+                    }
+                }
+            }
+
+            if (currentNearest && navGraph.getEndNode() && currentNearest != navGraph.getEndNode()) {
+                dijkstra.solveWithHistory(currentNearest, navGraph.getEndNode(),
+                                          navGraph.getVertices(), navGraph.getBlockedEdgesMap());
+                const auto& newPath = dijkstra.getShortestPathNodes();
+                if (!newPath.empty()) {
+                    rover.setPath(newPath);
+                }
+            }
+            rover.clearReplanRequest();
+        }
 
         // Active Camera (Smoothly blends Orbit, Chase, or Mast Camera)
         Camera3D activeCamera = rover.getCamera(cameraController.getCamera());
@@ -306,8 +339,13 @@ int main() {
             if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) {
                 cameraController.reset(Vector3{ 0.0f, 75.0f, 115.0f }, Vector3{ 0.0f, 0.0f, 0.0f });
             } else if (navGraph.getStartNode()) {
-                rover.reset(physics, navGraph.getStartNode()->position);
-                rover.setPath(dijkstra.getShortestPathNodes());
+                const auto& path = dijkstra.getShortestPathNodes();
+                float startYaw = 0.0f;
+                if (path.size() >= 2 && path[0] && path[1]) {
+                    startYaw = atan2f(path[1]->position.x - path[0]->position.x, path[1]->position.z - path[0]->position.z);
+                }
+                rover.reset(physics, navGraph.getStartNode()->position, startYaw);
+                rover.setPath(path);
             }
         }
         if (IsKeyPressed(KEY_U)) {

@@ -58,45 +58,102 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
         return std::numeric_limits<float>::infinity();
     }
 
+    // Hard traversability threshold: slopes > 22 deg are impassable for rovers
+    constexpr float MAX_TRAVERSABLE_SLOPE = 22.0f * DEG2RAD;
+    if (u->slopeAngleRad > MAX_TRAVERSABLE_SLOPE || v->slopeAngleRad > MAX_TRAVERSABLE_SLOPE) {
+        return std::numeric_limits<float>::infinity();
+    }
+
     // 1. 3D Euclidean Distance
     float d = Vector3Distance(u->position, v->position);
     if (d < 1e-4f) return 0.0f;
 
-    // 2. Elevation Delta & Work (Uphill climb vs downhill slope descent)
+    float dx = v->position.x - u->position.x;
     float dy = v->position.y - u->position.y;
-    float gravityFactor = 0.0f;
-    if (dy >= 0.0f) {
-        gravityFactor = m_weights.alpha * dy;
-    } else {
-        // Controlled downhill slope traversal
-        gravityFactor = -0.3f * fabsf(dy);
+    float dz = v->position.z - u->position.z;
+    float horizDist = sqrtf(dx * dx + dz * dz);
+
+    float segmentSlopeRad = atan2f(fabsf(dy), std::max(horizDist, 1e-3f));
+    if (segmentSlopeRad > MAX_TRAVERSABLE_SLOPE) {
+        return std::numeric_limits<float>::infinity();
     }
 
-    // 3. Slope Angle & Surface Friction
-    float horizDist = sqrtf((v->position.x - u->position.x) * (v->position.x - u->position.x) + 
-                            (v->position.z - u->position.z) * (v->position.z - u->position.z));
-    float segmentSlopeRad = atan2f(fabsf(dy), std::max(horizDist, 1e-3f));
+    // 2. Cross-Slope / Side-Hill (Roll Risk) Penalty
+    // Traversing along the flank of a steep slope or cliff exposes the rover to severe lateral roll/tip-over.
+    float sideSlopePenalty = 0.0f;
+    Vector3 avgNormal = Vector3Normalize(Vector3Add(u->surfaceNormal, v->surfaceNormal));
+    float gradLen = sqrtf(avgNormal.x * avgNormal.x + avgNormal.z * avgNormal.z);
+    if (gradLen > 0.05f && horizDist > 1e-3f) {
+        Vector2 gradDir = { avgNormal.x / gradLen, avgNormal.z / gradLen };
+        Vector2 travelDir = { dx / horizDist, dz / horizDist };
+        // Magnitude of 2D cross product gives |sin(angle)| between horizontal motion and slope fall-line
+        float sinSide = fabsf(travelDir.x * gradDir.y - travelDir.y * gradDir.x);
+        float localSlope = std::max(u->slopeAngleRad, v->slopeAngleRad);
+        float sideSlopeRad = localSlope * sinSide;
+        float sideSlopeDeg = sideSlopeRad * RAD2DEG;
+
+        // Above 18 degrees cross-slope: critical lateral rollover hazard -> strictly impassable
+        if (sideSlopeDeg > 18.0f) {
+            return std::numeric_limits<float>::infinity();
+        }
+        // Above 6 degrees cross-slope: progressive penalty to funnel paths to flat terrain / valleys
+        if (sideSlopeDeg > 6.0f) {
+            float excess = (sideSlopeDeg - 6.0f) / 12.0f;
+            sideSlopePenalty = 5.0f * (excess * excess);
+        }
+    }
+
+    // 3. Terrain Curvature / Bump / Ridge Crest Penalty
+    // Rapid normal divergence indicates crossing sharp bumps, crater rims, or rocky mounds
+    float bumpPenalty = 0.0f;
+    float normalDot = Clamp(Vector3DotProduct(u->surfaceNormal, v->surfaceNormal), -1.0f, 1.0f);
+    float deltaNormal = 1.0f - normalDot;
+    // Divergence > 35 degrees indicates sharp knife-edge crest that risks high-centering chassis
+    if (deltaNormal > 0.18f) {
+        return std::numeric_limits<float>::infinity();
+    }
+    if (deltaNormal > 0.02f) {
+        bumpPenalty = 8.0f * (deltaNormal * deltaNormal * 100.0f);
+    }
+
+    // 4. Cliff & Drop-Off Proximity Standoff Buffer
+    float maxCliffProx = std::max(u->cliffProximity, v->cliffProximity);
+    if (maxCliffProx >= 1.0f) {
+        return std::numeric_limits<float>::infinity();
+    }
+    float cliffBufferPenalty = 4.0f * (maxCliffProx * maxCliffProx);
+
+    // 5. Elevation Delta & Gravity / Braking Work
+    float gravityFactor = 0.0f;
+    if (dy >= 0.0f) {
+        // Climbing uphill requires motor energy against gravity
+        gravityFactor = m_weights.alpha * (dy / d);
+    } else {
+        // Steep descent requires braking work and introduces slide hazard (no negative discount)
+        if (segmentSlopeRad > 8.0f * DEG2RAD) {
+            gravityFactor = 1.5f * (fabsf(dy) / d);
+        }
+    }
+
+    // 6. Slope Traction & Coulomb Friction Slip
     float maxSlopeRad = std::max(segmentSlopeRad, std::max(u->slopeAngleRad, v->slopeAngleRad));
     float mu_s = 0.5f * (u->surfaceFriction + v->surfaceFriction);
     if (mu_s < 0.05f) mu_s = 0.05f;
 
-    // Coulomb Slip Threshold: if tan(theta) > mu_s, rover wheels spin helplessly
     float tanTheta = tanf(maxSlopeRad);
     if (tanTheta > mu_s) {
         return std::numeric_limits<float>::infinity();
     }
 
-    // Near-slip penalty: beta * (tan(theta) / mu_s)^2
     float slipRatio = tanTheta / mu_s;
     float slipPenalty = m_weights.beta * (slipRatio * slipRatio);
-
-    // Surface roughness / loose soil resistance: gamma * (1.0 - mu_s)
     float frictionPenalty = m_weights.gamma * (1.0f - mu_s);
 
     // Base physical work multiplier (clamped to ensure strictly positive edge weights)
-    float unitCost = std::max(0.1f, 1.0f + gravityFactor + slipPenalty + frictionPenalty);
+    float unitCost = std::max(0.1f, 1.0f + gravityFactor + slipPenalty + frictionPenalty + 
+                                           sideSlopePenalty + bumpPenalty + cliffBufferPenalty);
 
-    // 4. Directional Heading Change Penalty
+    // 7. Directional Heading Change Penalty
     float turnPenalty = 0.0f;
     if (parentOfU != nullptr) {
         Vector2 inDir = Vector2Normalize(Vector2{ u->position.x - parentOfU->position.x, u->position.z - parentOfU->position.z });

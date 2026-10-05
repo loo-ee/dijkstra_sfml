@@ -44,6 +44,11 @@ void RoverTelemetryHUD::draw(const PlanetaryRover& rover, int screenW, int scree
         badgeBorder = Color{ 0, 220, 240, 255 };
         badgeText = Color{ 0, 240, 255, 255 };
         statusText = "STATUS: MISSION OBJECTIVE REACHED";
+    } else if (rover.isReversing()) {
+        badgeBg = Color{ 54, 28, 12, 255 };
+        badgeBorder = Color{ 245, 130, 32, 255 };
+        badgeText = Color{ 255, 160, 50, 255 };
+        statusText = "STATUS: REVERSE GEAR (OBSTACLE/SLOPE RECOVERY)";
     } else if (rover.isAutonomous()) {
         badgeBg = Color{ 16, 48, 32, 255 };
         badgeBorder = Color{ 46, 204, 113, 255 };

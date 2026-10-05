@@ -12,6 +12,7 @@
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
 
 #include <iostream>
 #include <thread>
@@ -306,7 +307,7 @@ void PhysicsWorld::clearDynamicSpheres() {
     m_dynamicSpheres.clear();
 }
 
-bool PhysicsWorld::raycast(Vector3 from, Vector3 to, Vector3* hitPoint, Vector3* hitNormal) {
+bool PhysicsWorld::raycast(Vector3 from, Vector3 to, Vector3* hitPoint, Vector3* hitNormal, JPH::BodyID ignoreBody) {
     if (!m_initialized) return false;
 
     JPH::RVec3 origin(from.x, from.y, from.z);
@@ -316,7 +317,13 @@ bool PhysicsWorld::raycast(Vector3 from, Vector3 to, Vector3* hitPoint, Vector3*
 
     JPH::RRayCast ray(origin, dir);
     JPH::RayCastResult hit;
-    bool hasHit = m_physicsSystem.GetNarrowPhaseQuery().CastRay(ray, hit);
+    bool hasHit = false;
+    if (!ignoreBody.IsInvalid()) {
+        JPH::IgnoreSingleBodyFilter filter(ignoreBody);
+        hasHit = m_physicsSystem.GetNarrowPhaseQuery().CastRay(ray, hit, {}, {}, filter);
+    } else {
+        hasHit = m_physicsSystem.GetNarrowPhaseQuery().CastRay(ray, hit);
+    }
     if (hasHit && hit.mFraction <= 1.0f) {
         if (hitPoint) {
             JPH::RVec3 p = ray.GetPointOnRay(hit.mFraction);
@@ -350,8 +357,9 @@ JPH::BodyID PhysicsWorld::createChassisBody(Vector3 pos, Vector3 halfExtents, fl
     if (!m_initialized) return JPH::BodyID();
 
     JPH::ShapeRefC boxShape = new JPH::BoxShape(JPH::Vec3(halfExtents.x, halfExtents.y, halfExtents.z));
-    // Ballasted belly center of mass (lowered undercarriage, matching Mars rover physics)
-    JPH::ShapeRefC offsetShape = new JPH::OffsetCenterOfMassShape(boxShape, JPH::Vec3(0.0f, -0.36f, 0.0f));
+    // Low belly-ballast center of mass offset (lowered undercarriage)
+    // Box half-height is 0.35m; -0.16m safely places mass center in the bottom tub for static stability
+    JPH::ShapeRefC offsetShape = new JPH::OffsetCenterOfMassShape(boxShape, JPH::Vec3(0.0f, -0.16f, 0.0f));
 
     JPH::BodyCreationSettings settings(
         offsetShape,
@@ -397,7 +405,7 @@ void PhysicsWorld::getBodyTransform(JPH::BodyID id, Vector3& outPos, Quaternion&
         return;
     }
     const JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
-    JPH::RVec3 p = bodyInterface.GetCenterOfMassPosition(id);
+    JPH::RVec3 p = bodyInterface.GetPosition(id);
     JPH::Quat q = bodyInterface.GetRotation(id);
     outPos = Vector3{ static_cast<float>(p.GetX()), static_cast<float>(p.GetY()), static_cast<float>(p.GetZ()) };
     outRot = Quaternion{ q.GetX(), q.GetY(), q.GetZ(), q.GetW() };
