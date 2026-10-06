@@ -1,0 +1,14 @@
+-std=c++17
+-isysroot=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+-I/opt/homebrew/include
+-I/opt/homebrew/opt/sfml@2/include
+-Iinclude
+-Iinclude/rover
+-Iinclude/visualizer2d
+-Iexternal/JoltPhysics
+-DNDEBUG
+-DJPH_DEBUG_RENDERER
+-DJPH_OBJECT_STREAM
+-DJPH_PROFILE_ENABLED
+-DJPH_USE_CPU_COMPUTE
+-DJPH_USE_MTL

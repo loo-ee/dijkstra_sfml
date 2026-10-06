@@ -32,3 +32,8 @@
 *.app
 build/
 external/
+
+# Language Server & IDE
+.cache/
+compile_commands.json
+.DS_Store

@@ -1,0 +1,21 @@
+{
+  "clangd.arguments": [
+    "--compile-commands-dir=${workspaceFolder}",
+    "--background-index",
+    "--header-insertion=never",
+    "--query-driver=/usr/bin/*,/opt/homebrew/**,/Applications/Xcode.app/**"
+  ],
+  "clangd.fallbackFlags": [
+    "-std=c++17",
+    "-isysroot=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+    "-I/opt/homebrew/include",
+    "-I/opt/homebrew/opt/sfml@2/include",
+    "-I${workspaceFolder}/include",
+    "-I${workspaceFolder}/include/rover",
+    "-I${workspaceFolder}/include/visualizer2d",
+    "-I${workspaceFolder}/external/JoltPhysics",
+    "-DNDEBUG",
+    "-DJPH_DEBUG_RENDERER",
+    "-DJPH_OBJECT_STREAM"
+  ]
+}

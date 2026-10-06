@@ -1,0 +1,33 @@
+{
+  "configurations": [
+    {
+      "name": "Mac",
+      "includePath": [
+        "${workspaceFolder}/**",
+        "${workspaceFolder}/include/**",
+        "${workspaceFolder}/external/**",
+        "/opt/homebrew/include/**",
+        "/opt/homebrew/opt/raylib/include/**",
+        "/opt/homebrew/opt/sfml@2/include/**"
+      ],
+      "defines": [
+        "NDEBUG",
+        "JPH_DEBUG_RENDERER",
+        "JPH_OBJECT_STREAM",
+        "JPH_PROFILE_ENABLED",
+        "JPH_USE_CPU_COMPUTE",
+        "JPH_USE_MTL"
+      ],
+      "macFrameworkPath": [
+        "/System/Library/Frameworks",
+        "/Library/Frameworks"
+      ],
+      "compilerPath": "/usr/bin/clang++",
+      "cStandard": "c17",
+      "cppStandard": "c++17",
+      "intelliSenseMode": "macos-clang-arm64",
+      "compileCommands": "${workspaceFolder}/compile_commands.json"
+    }
+  ],
+  "version": 4
+}
