@@ -21,7 +21,7 @@ enum class TerrainPreset {
 
 class TerrainHeightfield {
 public:
-    TerrainHeightfield(int resolution = 128, float size = 200.0f);
+    TerrainHeightfield(int resolution = 256, float size = 600.0f);
     ~TerrainHeightfield();
 
     // Prevent accidental copying of GPU model

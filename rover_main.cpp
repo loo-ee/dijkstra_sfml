@@ -16,6 +16,7 @@
 #include "DijkstraSolver3D.h"
 #include "PlanetaryRover.h"
 #include "RoverTelemetryHUD.h"
+#include "SmartCostSelector.h"
 
 // Helper: Render a modern, high-contrast keybinding badge pill with text, returning total width
 static int DrawKeyBind(int x, int y, const char* key, const char* label, bool active = true) {
@@ -194,7 +195,7 @@ int main() {
     const int screenWidth = 1280;
     const int screenHeight = 720;
 
-    SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT | FLAG_WINDOW_HIGHDPI);
+    SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
     InitWindow(screenWidth, screenHeight, "3D Planetary Rover Simulator - Martian Terrain & Physics");
     SetTargetFPS(60);
 
@@ -222,7 +223,14 @@ int main() {
     // 7. Physics-Weighted 3D Dijkstra Solver with Snapshot History
     DijkstraSolver3D dijkstra;
     int currentPresetIndex = 0;
-    dijkstra.applyPreset(currentPresetIndex);
+    bool isSmartAutoCost = true;
+    SmartCostDecision activeSmartDecision = SmartCostSelector::evaluateStrategy(100.0f, TerrainPreset::OLYMPUS_CRATER);
+    if (activeSmartDecision.isNeural) {
+        dijkstra.applyPreset(4);
+    } else {
+        dijkstra.setWeights(activeSmartDecision.weights);
+    }
+    currentPresetIndex = activeSmartDecision.selectedPresetIndex;
 
     // 8. Planetary Rover Rig
     PlanetaryRover rover;
@@ -256,7 +264,7 @@ int main() {
         physics.step(dt);
 
         // Update Autonomous Planetary Rover & Pure Pursuit Navigation
-        rover.update(physics, dt);
+        rover.update(physics, dt, &terrain);
 
         // Lazy-Loaded Dynamic Exploration Discovery:
         // As rover or camera moves into undiscovered areas, lazily unveil new nodes (radius 96m)
@@ -300,9 +308,14 @@ int main() {
             if (navGraph.getEndNode()) {
                 navGraph.ensureCorridor(terrain, roverPos, navGraph.getEndNode()->position, navGraph.getSpacing());
             }
-            navGraph.generatePersistentPlanetaryGrid(terrain, roverPos, 120.0f, navGraph.getSpacing());
+            navGraph.generatePersistentPlanetaryGrid(terrain, roverPos, 130.0f, navGraph.getSpacing());
 
-            // Find candidate walkable nodes near the rover
+            // Exclude visited standoff vantage points to prevent 2-node ping-pong looping
+            const auto& visitedVantage = rover.getVisitedVantageHistory();
+            std::unordered_set<std::string> excludedSet(visitedVantage.begin(), visitedVantage.end());
+            dijkstra.setExcludedVantageNodes(excludedSet);
+
+            // Find candidate walkable nodes near the rover (including forward, left flank, and right flank)
             struct CandidateNode {
                 Vertex3D* node;
                 float score;
@@ -313,8 +326,10 @@ int main() {
                 Vector3 toV = Vector3Subtract(v->position, roverPos);
                 float dot = Vector3DotProduct(toV, roverFwd);
                 float dsq = Vector3DistanceSqr(roverPos, v->position);
-                if (dsq > 40.0f * 40.0f) continue;
-                float score = (dot > 0.0f) ? dsq : (dsq + 80.0f);
+                if (dsq > 48.0f * 48.0f) continue;
+                bool isExcluded = (excludedSet.find(v->name) != excludedSet.end());
+                // Prioritize forward and lateral flanking unvisited nodes
+                float score = (dot > -0.2f ? dsq : (dsq + 50.0f)) + (isExcluded ? 1000.0f : 0.0f);
                 candidates.push_back({ v, score });
             }
             std::sort(candidates.begin(), candidates.end(), [](const CandidateNode& a, const CandidateNode& b) {
@@ -331,7 +346,8 @@ int main() {
                 bool bestIsPartial = true;
                 float bestDistToGoal = 1e9f;
 
-                for (size_t i = 0; i < std::min<size_t>(candidates.size(), 4); ++i) {
+                // Evaluate candidate starting nodes around the rover to discover flank detours
+                for (size_t i = 0; i < std::min<size_t>(candidates.size(), 8); ++i) {
                     Vertex3D* candNode = candidates[i].node;
                     if (!candNode || candNode == navGraph.getEndNode()) continue;
 
@@ -342,6 +358,7 @@ int main() {
                         bool isPartial = dijkstra.isPartialPath();
                         float distToGoal = dijkstra.getDistanceToGoal();
                         if (!isPartial) {
+                            // Complete route around obstacle discovered!
                             bestPath = path;
                             bestIsPartial = false;
                             bestDistToGoal = 0.0f;
@@ -378,7 +395,7 @@ int main() {
             Rectangle legRect = { 16.0f, 326.0f + 16.0f + 8.0f, 440.0f, 88.0f };
             int deckH = 92;
             Rectangle deckRect = { 16.0f, (float)(screenH - deckH - 16), (float)(screenW - 32), (float)deckH };
-            Rectangle telemRect = { (float)(screenW - 340 - 16), 16.0f, 340.0f, 505.0f };
+            Rectangle telemRect = { (float)(screenW - 340 - 16), 16.0f, 340.0f, 600.0f };
 
             if (CheckCollisionPointRec(mousePos, hudRect) ||
                 CheckCollisionPointRec(mousePos, legRect) ||
@@ -401,6 +418,8 @@ int main() {
 
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 if (hoveredNode) {
+                    rover.clearVisitedVantageHistory();
+                    dijkstra.clearExcludedVantageNodes();
                     if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) {
                         navGraph.setEndNode(hoveredNode);
                     } else {
@@ -438,11 +457,35 @@ int main() {
             cameraController.update(isOverUI, SampleActiveTerrainHeight, isLeftDragging);
         }
 
+        // Real-Time Smart Cost Selector Engine (Adapts weights dynamically to Battery % and Terrain Topography)
+        if (isSmartAutoCost) {
+            SmartCostDecision newDec = SmartCostSelector::evaluateStrategy(
+                rover.getBatteryPercent(),
+                terrain.getPreset()
+            );
+            if (newDec.strategyName != activeSmartDecision.strategyName || newDec.isNeural != activeSmartDecision.isNeural) {
+                activeSmartDecision = newDec;
+                currentPresetIndex = activeSmartDecision.selectedPresetIndex;
+                if (activeSmartDecision.isNeural) {
+                    dijkstra.applyPreset(4);
+                } else {
+                    dijkstra.setWeights(activeSmartDecision.weights);
+                }
+                if (navGraph.getStartNode() && navGraph.getEndNode()) {
+                    dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
+                                              navGraph.getVertices(), navGraph.getBlockedEdgesMap());
+                    Vector3 goalPos = navGraph.getEndNode() ? navGraph.getEndNode()->position : Vector3{ 0, 0, 0 };
+                    rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal(), goalPos);
+                }
+            }
+        }
+
         // Update Dijkstra Step-by-Step Playback
         dijkstra.update(dt);
 
-        // Cost Preset Selection Keys: 1, 2, 3, 4, 5
+        // Cost Preset Selection Keys: 1, 2, 3, 4, 5 & Smart Auto Toggle: 0
         auto applyPresetAndRoute = [&](int presetIdx) {
+            isSmartAutoCost = false;
             currentPresetIndex = presetIdx;
             dijkstra.applyPreset(presetIdx);
             dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
@@ -451,6 +494,24 @@ int main() {
             rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal(), goalPos);
         };
 
+        if (IsKeyPressed(KEY_ZERO)) {
+            isSmartAutoCost = !isSmartAutoCost;
+            if (isSmartAutoCost) {
+                activeSmartDecision = SmartCostSelector::evaluateStrategy(rover.getBatteryPercent(), terrain.getPreset());
+                currentPresetIndex = activeSmartDecision.selectedPresetIndex;
+                if (activeSmartDecision.isNeural) {
+                    dijkstra.applyPreset(4);
+                } else {
+                    dijkstra.setWeights(activeSmartDecision.weights);
+                }
+                if (navGraph.getStartNode() && navGraph.getEndNode()) {
+                    dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
+                                              navGraph.getVertices(), navGraph.getBlockedEdgesMap());
+                    Vector3 goalPos = navGraph.getEndNode() ? navGraph.getEndNode()->position : Vector3{ 0, 0, 0 };
+                    rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal(), goalPos);
+                }
+            }
+        }
         if (IsKeyPressed(KEY_ONE))   applyPresetAndRoute(0);
         if (IsKeyPressed(KEY_TWO))   applyPresetAndRoute(1);
         if (IsKeyPressed(KEY_THREE)) applyPresetAndRoute(2);
@@ -478,6 +539,12 @@ int main() {
             terrain.cyclePreset();
             ApplyTerrainPreset(terrain.getPreset(), terrain, chunkMgr, infiniteWorldMode, physics, navGraph, dijkstra, rover, blockedEdgeCount);
             lastNavGraphCenter = rover.getPosition();
+            if (isSmartAutoCost) {
+                activeSmartDecision = SmartCostSelector::evaluateStrategy(rover.getBatteryPercent(), terrain.getPreset());
+                currentPresetIndex = activeSmartDecision.selectedPresetIndex;
+                if (activeSmartDecision.isNeural) dijkstra.applyPreset(4);
+                else dijkstra.setWeights(activeSmartDecision.weights);
+            }
         }
         if (IsKeyPressed(KEY_I)) {
             infiniteWorldMode = !infiniteWorldMode;
@@ -501,7 +568,11 @@ int main() {
             }
         }
         if (IsKeyPressed(KEY_U)) {
-            rover.selfRight(physics);
+            if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) {
+                rover.refuel();
+            } else {
+                rover.selfRight(physics);
+            }
         }
         if (IsKeyPressed(KEY_G)) {
             // Cycle between realistic planetary gravities: Mars (-3.71) -> Moon (-1.62) -> Earth (-9.81)
@@ -616,16 +687,16 @@ int main() {
 
             // B. Draw Procedural Martian Planetary Globe Mesh (1,440m circular sphere)
             if (showTerrain && terrain.isLoaded()) {
+                rlDisableBackfaceCulling();
+                DrawModel(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, WHITE);
+                rlEnableBackfaceCulling();
+
+                if (showWireframe) {
+                    DrawModelWires(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, ColorAlpha(BLACK, 0.2f));
+                }
+
                 if (infiniteWorldMode) {
                     chunkMgr.draw(showWireframe);
-                } else {
-                    rlDisableBackfaceCulling();
-                    DrawModel(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, WHITE);
-                    rlEnableBackfaceCulling();
-
-                    if (showWireframe) {
-                        DrawModelWires(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, ColorAlpha(BLACK, 0.2f));
-                    }
                 }
 
                 // Curved Atmospheric Horizon Glow Ring (Spherical Horizon Silhouette)
@@ -700,48 +771,58 @@ int main() {
                     }
 
                     float distToCam = Vector3Distance(camPos, v->position);
-                    if (distToCam > 160.0f) {
+                    if (distToCam > 175.0f) {
                         continue; // Skip rendering distant nodes
                     }
 
+                    float surfY = terrain.getHeight(v->position.x, v->position.z);
+                    Vector3 baseAnchor = { v->position.x, surfY + 0.05f, v->position.z };
+
                     if (v->state == NodeState::IMPASSABLE) {
                         // Prominent Hazard Node on steep slopes / cliffs / boulder hazards
-                        DrawSphere(v->position, 0.70f, Color{ 235, 65, 50, 220 });
+                        DrawSphere(v->position, 0.75f, Color{ 235, 65, 50, 220 });
+                        DrawLine3D(baseAnchor, v->position, ColorAlpha(Color{ 235, 65, 50, 255 }, 0.70f));
                         if (distToCam < 90.0f) {
-                            DrawSphereWires(v->position, 0.90f, 4, 4, ColorAlpha(RED, 0.50f));
+                            DrawSphereWires(v->position, 0.95f, 4, 4, ColorAlpha(RED, 0.50f));
+                            DrawCircle3D(baseAnchor, 0.45f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(RED, 0.40f));
                         }
                         continue;
                     }
 
                     Color nodeCol = GraphRenderer3D::getNodeColor(v->state);
-                    float r = 0.90f; // Prominently visible from panoramic orbit camera!
+                    float r = 0.85f; // Prominently visible from panoramic orbit camera!
                     DrawSphere(v->position, r, nodeCol);
-                    if (distToCam < 90.0f) {
+                    DrawLine3D(baseAnchor, v->position, ColorAlpha(nodeCol, 0.75f));
+                    if (distToCam < 95.0f) {
                         DrawSphereWires(v->position, r * 1.25f, 6, 6, ColorAlpha(nodeCol, 0.60f));
-                        DrawLine3D(v->position, Vector3{ v->position.x, v->position.y - 0.5f, v->position.z }, ColorAlpha(nodeCol, 0.8f));
+                        DrawCircle3D(baseAnchor, 0.50f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(nodeCol, 0.45f));
                     }
                 }
 
                 // Prominent START Beacon with 26m vertical laser beam and pulsating radar ground rings
                 if (const Vertex3D* s = navGraph.getStartNode()) {
+                    float sSurfY = terrain.getHeight(s->position.x, s->position.z);
+                    Vector3 sBase = { s->position.x, sSurfY + 0.05f, s->position.z };
                     Vector3 pillarTop = Vector3Add(s->position, Vector3{ 0.0f, 26.0f, 0.0f });
-                    DrawCylinderEx(s->position, pillarTop, 0.40f, 0.05f, 10, ColorAlpha(Color{ 46, 230, 113, 255 }, 0.85f));
+                    DrawCylinderEx(sBase, pillarTop, 0.40f, 0.05f, 10, ColorAlpha(Color{ 46, 230, 113, 255 }, 0.85f));
                     DrawSphere(s->position, 1.8f, Color{ 46, 230, 113, 255 });
                     DrawSphereWires(s->position, 2.3f, 8, 8, WHITE);
                     float pulseR = 3.5f + sinf(sceneTime * 4.0f) * 0.8f;
-                    DrawCircle3D(s->position, pulseR, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 46, 230, 113, 255 }, 0.75f));
-                    DrawCircle3D(s->position, pulseR * 1.5f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 46, 230, 113, 255 }, 0.35f));
+                    DrawCircle3D(sBase, pulseR, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 46, 230, 113, 255 }, 0.75f));
+                    DrawCircle3D(sBase, pulseR * 1.5f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 46, 230, 113, 255 }, 0.35f));
                 }
 
                 // Prominent END Beacon with 26m vertical laser beam and pulsating radar ground rings
                 if (const Vertex3D* e = navGraph.getEndNode()) {
+                    float eSurfY = terrain.getHeight(e->position.x, e->position.z);
+                    Vector3 eBase = { e->position.x, eSurfY + 0.05f, e->position.z };
                     Vector3 pillarTop = Vector3Add(e->position, Vector3{ 0.0f, 26.0f, 0.0f });
-                    DrawCylinderEx(e->position, pillarTop, 0.40f, 0.05f, 10, ColorAlpha(Color{ 235, 60, 60, 255 }, 0.85f));
+                    DrawCylinderEx(eBase, pillarTop, 0.40f, 0.05f, 10, ColorAlpha(Color{ 235, 60, 60, 255 }, 0.85f));
                     DrawSphere(e->position, 1.8f, Color{ 235, 60, 60, 255 });
                     DrawSphereWires(e->position, 2.3f, 8, 8, WHITE);
                     float pulseR = 3.5f + sinf(sceneTime * 4.0f + 1.5f) * 0.8f;
-                    DrawCircle3D(e->position, pulseR, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 235, 60, 60, 255 }, 0.75f));
-                    DrawCircle3D(e->position, pulseR * 1.5f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 235, 60, 60, 255 }, 0.35f));
+                    DrawCircle3D(eBase, pulseR, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 235, 60, 60, 255 }, 0.75f));
+                    DrawCircle3D(eBase, pulseR * 1.5f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 235, 60, 60, 255 }, 0.35f));
                 }
             }
 
@@ -828,13 +909,18 @@ int main() {
 
             // Row 2: Active Cost Preset & Parameters
             const auto& w = dijkstra.getWeights();
-            if (dijkstra.isNeuralMode()) {
-                DrawText(TextFormat("Cost Preset [5]: %s", w.name.c_str()), 
+            if (isSmartAutoCost) {
+                DrawText(TextFormat("Smart Auto-Cost [0]: %s", activeSmartDecision.strategyName.c_str()), 
+                    hudX + 16, hudY + 90, 11, Color{ 0, 240, 255, 255 });
+                DrawText(TextFormat("Rationale: %s", activeSmartDecision.rationale.c_str()), 
+                    hudX + 16, hudY + 106, 10, Color{ 140, 215, 245, 255 });
+            } else if (dijkstra.isNeuralMode()) {
+                DrawText(TextFormat("Manual Preset [5]: %s (Auto: [0])", w.name.c_str()), 
                     hudX + 16, hudY + 90, 11, Color{ 60, 230, 175, 255 });
                 DrawText("Engine: 3-Layer PINN MLP (8 -> 32 -> 16 -> 1) | <0.05 us/edge | Zero-Alloc", 
                     hudX + 16, hudY + 106, 10, Color{ 140, 235, 205, 255 });
             } else {
-                DrawText(TextFormat("Cost Preset [%d]: %s", currentPresetIndex + 1, w.name.c_str()), 
+                DrawText(TextFormat("Manual Preset [%d]: %s (Auto: [0])", currentPresetIndex + 1, w.name.c_str()), 
                     hudX + 16, hudY + 90, 11, Color{ 240, 200, 80, 255 });
                 DrawText(TextFormat("Weights: alpha=%.1f (Work) | beta=%.1f (Slip) | gamma=%.1f | delta=%.1f", 
                     w.alpha, w.beta, w.gamma, w.delta), hudX + 16, hudY + 106, 10, Color{ 160, 175, 195, 255 });
@@ -964,7 +1050,7 @@ int main() {
             // ----------------------------------------------------
             // 3. TOP-RIGHT: Planetary Rover Flight Telemetry HUD
             // ----------------------------------------------------
-            RoverTelemetryHUD::draw(rover, screenW, screenH, sceneTime);
+            RoverTelemetryHUD::draw(rover, screenW, screenH, sceneTime, &activeSmartDecision, isSmartAutoCost);
 
             // ----------------------------------------------------
             // 4. BOTTOM COMMAND DECK & KEYBINDINGS BAR
@@ -996,13 +1082,13 @@ int main() {
             DrawLine(c2X - 12, deckY + 10, c2X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
             DrawText("ROVER NAVIGATION (WASD)", c2X, deckY + 10, 10, Color{ 46, 204, 113, 255 });
             int x3 = c2X;
-            x3 += DrawKeyBind(x3, deckY + 28, "Tab", rover.isAutonomous() ? "Manual" : "Auto Drive") + 8;
-            x3 += DrawKeyBind(x3, deckY + 28, "T", "Traverse") + 8;
-            x3 += DrawKeyBind(x3, deckY + 28, "WASD", "Drive") + 8;
+            x3 += DrawKeyBind(x3, deckY + 28, "Tab", rover.isAutonomous() ? "Manual" : "Auto Drive") + 6;
+            x3 += DrawKeyBind(x3, deckY + 28, "WASD", "Drive") + 6;
             DrawKeyBind(x3, deckY + 28, "Space", "Brake");
             int x4 = c2X;
-            x4 += DrawKeyBind(x4, deckY + 54, "R", "Reset") + 8;
-            x4 += DrawKeyBind(x4, deckY + 54, "U", "Self-Right") + 8;
+            x4 += DrawKeyBind(x4, deckY + 54, "T", "Traverse") + 6;
+            x4 += DrawKeyBind(x4, deckY + 54, "R", "Reset") + 6;
+            x4 += DrawKeyBind(x4, deckY + 54, "U/Sh+U", "Right/Fuel") + 6;
             const char* gKeyName = "Mars G";
             if (fabsf(physics.getGravity() + 1.62f) < 0.2f) gKeyName = "Moon G";
             else if (fabsf(physics.getGravity() + 9.81f) < 0.5f) gKeyName = "Earth G";
@@ -1014,11 +1100,11 @@ int main() {
             DrawText("TERRAIN & DIJKSTRA", c3X, deckY + 10, 10, Color{ 241, 196, 15, 255 });
             int x5 = c3X;
             x5 += DrawKeyBind(x5, deckY + 28, "M", "Preset") + 6;
-            x5 += DrawKeyBind(x5, deckY + 28, "I", infiniteWorldMode ? "Infinite" : "Bounded", infiniteWorldMode) + 6;
-            DrawKeyBind(x5, deckY + 28, "1-5", "Cost");
+            x5 += DrawKeyBind(x5, deckY + 28, "I", infiniteWorldMode ? "Inf" : "Bound", infiniteWorldMode) + 6;
+            DrawKeyBind(x5, deckY + 28, "0", isSmartAutoCost ? "AutoCost" : "Manual", isSmartAutoCost);
             int x6 = c3X;
-            x6 += DrawKeyBind(x6, deckY + 54, "P", dijkstra.isPlaying() ? "Pause" : "Play") + 8;
-            x6 += DrawKeyBind(x6, deckY + 54, "Left/Right", "Step") + 8;
+            x6 += DrawKeyBind(x6, deckY + 54, "1-5", "Preset") + 6;
+            x6 += DrawKeyBind(x6, deckY + 54, "P", dijkstra.isPlaying() ? "Pause" : "Play") + 6;
             DrawKeyBind(x6, deckY + 54, "Enter", "Finish");
 
             // --- Column 4: View & Simulation Toggles ---
@@ -1061,6 +1147,8 @@ int main() {
             }
         }
 
+        EndDrawing();
+
         static int s_frameCounter = 0;
         s_frameCounter++;
         const char* screenshotPath = getenv("ROVER_SCREENSHOT_PATH");
@@ -1069,8 +1157,6 @@ int main() {
             TakeScreenshot(screenshotPath);
             break;
         }
-
-        EndDrawing();
     }
 
     // Cleanup & Exit

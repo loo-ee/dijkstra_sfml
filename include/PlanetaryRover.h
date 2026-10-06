@@ -44,7 +44,7 @@ public:
 
     void init(PhysicsWorld& physics, Vector3 spawnPos, float yawAngleRad = 0.0f);
     void reset(PhysicsWorld& physics, Vector3 spawnPos, float yawAngleRad = 0.0f);
-    void update(PhysicsWorld& physics, float dt);
+    void update(PhysicsWorld& physics, float dt, const class TerrainHeightfield* terrain = nullptr);
     void render(float sceneTime) const;
 
     // Autonomous Pure Pursuit Waypoint Navigation
@@ -54,8 +54,11 @@ public:
     bool isAutonomous() const { return m_isAutonomous; }
     bool hasReachedGoal() const { return m_hasReachedGoal; }
     bool isAtStandoffVantage() const { return m_isAtStandoffVantage; }
+    bool isSeekingDetour() const { return m_isSeekingDetour; }
     bool isDirectHoming() const { return m_isDirectHoming; }
     float getStandoffDistance() const { return m_standoffDist; }
+    const std::vector<std::string>& getVisitedVantageHistory() const { return m_visitedVantageHistory; }
+    void clearVisitedVantageHistory() { m_visitedVantageHistory.clear(); }
     void toggleAutonomous() { m_isAutonomous = !m_isAutonomous; }
 
     // Manual Drive Overrides (when autonomous is paused)
@@ -91,6 +94,19 @@ public:
     float getBatteryExpendedKJ() const { return m_batteryJoules * 0.001f; }
     float getCurrentPowerKW() const { return m_currentPowerWatts * 0.001f; }
     
+    // Fuel & Battery Energy Model (RTG + Photovoltaic Storage)
+    float getBatteryCapacityKJ() const { return m_batteryCapacityJoules * 0.001f; }
+    float getBatteryRemainingKJ() const { return m_currentBatteryJoules * 0.001f; }
+    float getBatteryPercent() const { return (m_batteryCapacityJoules > 0.0f) ? Clamp(m_currentBatteryJoules / m_batteryCapacityJoules * 100.0f, 0.0f, 100.0f) : 0.0f; }
+    float getNetChargeWatts() const { return m_rtgRechargeWatts - m_currentPowerWatts - 30.0f; }
+    float getEstimatedRangeMeters() const {
+        float avgWatts = std::max(60.0f, m_currentPowerWatts + 30.0f);
+        float speed = std::max(1.2f, fabsf(m_speed));
+        return (m_currentBatteryJoules / avgWatts) * speed;
+    }
+    bool isBatteryDepleted() const { return m_currentBatteryJoules <= 200.0f; }
+    void refuel() { m_currentBatteryJoules = m_batteryCapacityJoules; }
+    
     // Pure Pursuit Metrics
     int getCurrentWaypointIndex() const { return m_currentWaypointIndex; }
     int getTotalWaypoints() const { return static_cast<int>(m_waypoints.size()); }
@@ -118,7 +134,7 @@ public:
 
 private:
     void updatePurePursuit(PhysicsWorld& physics, float dt);
-    void updateSuspensionAndTires(PhysicsWorld& physics, float dt);
+    void updateSuspensionAndTires(PhysicsWorld& physics, float dt, const class TerrainHeightfield* terrain = nullptr);
     void updateAttitudeAndSensors(float dt);
 
     JPH::BodyID m_chassisBodyId;
@@ -141,6 +157,9 @@ private:
     float m_odometerMeters;
     float m_batteryJoules;
     float m_currentPowerWatts;
+    float m_batteryCapacityJoules; // 1,000 kJ (1 MJ) storage
+    float m_currentBatteryJoules;  // State of charge
+    float m_rtgRechargeWatts;      // +120W continuous RTG generator trickle charging
 
     // Suspension & 4 Wheels
     WheelState m_wheels[4];
@@ -181,9 +200,12 @@ private:
     bool m_isPartialPath;
     float m_standoffDist;
     bool m_isAtStandoffVantage;
+    bool m_isSeekingDetour;
     float m_standoffTimer;
     bool m_isDirectHoming;
     Vector3 m_finalGoalPos;
+    std::string m_lastVantageNodeName;
+    std::vector<std::string> m_visitedVantageHistory;
 
     // Camera Mode
     RoverCameraMode m_cameraMode;

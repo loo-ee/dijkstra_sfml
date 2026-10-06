@@ -70,8 +70,8 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
         return std::numeric_limits<float>::infinity();
     }
 
-    // Hard traversability threshold: slopes >= 15.5 deg are impassable for rovers to ensure safe climbing without stall
-    constexpr float MAX_TRAVERSABLE_SLOPE = 15.5f * DEG2RAD;
+    // Hard traversability threshold: slopes >= 22.0 deg are impassable for rovers to ensure safe climbing without stall
+    constexpr float MAX_TRAVERSABLE_SLOPE = 22.0f * DEG2RAD;
     if (u->slopeAngleRad >= MAX_TRAVERSABLE_SLOPE || v->slopeAngleRad >= MAX_TRAVERSABLE_SLOPE) {
         return std::numeric_limits<float>::infinity();
     }
@@ -105,14 +105,14 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
         sideSlopeRad = localSlope * sinSide;
         float sideSlopeDeg = sideSlopeRad * RAD2DEG;
 
-        // Above 14 degrees cross-slope: critical lateral rollover hazard -> strictly impassable
-        if (sideSlopeDeg > 14.0f) {
+        // Above 18 degrees cross-slope: critical lateral rollover hazard -> strictly impassable
+        if (sideSlopeDeg > 18.0f) {
             return std::numeric_limits<float>::infinity();
         }
-        // Above 5 degrees cross-slope: progressive penalty to funnel paths to flat terrain / valleys
-        if (sideSlopeDeg > 5.0f) {
-            float excess = (sideSlopeDeg - 5.0f) / 9.0f;
-            sideSlopePenalty = 8.0f * (excess * excess);
+        // Above 6 degrees cross-slope: progressive penalty to funnel paths to flat terrain / valleys
+        if (sideSlopeDeg > 6.0f) {
+            float excess = (sideSlopeDeg - 6.0f) / 12.0f;
+            sideSlopePenalty = 6.0f * (excess * excess);
         }
     }
 
@@ -294,30 +294,33 @@ void DijkstraSolver3D::solveInstant(Vertex3D* start, Vertex3D* end,
         m_pathStats.isPartial = false;
         m_pathStats.distanceToGoal = 0.0f;
     } else {
-        // Fallback: Best-Effort Closest Approach Standoff to Destination
-        Vertex3D* closest = nullptr;
-        float minTargetDist = std::numeric_limits<float>::infinity();
+        // Fallback: Breadth-First / Detour Frontier Selection
+        Vertex3D* bestFrontierNode = nullptr;
+        float bestScore = std::numeric_limits<float>::infinity();
 
         for (Vertex3D* v : m_allVertices) {
             if (v != m_startNode && !std::isinf(v->minDistanceFromSrc) && v->parent != nullptr) {
                 float distToGoal = Vector3Distance(v->position, m_endNode->position);
-                if (distToGoal < minTargetDist) {
-                    minTargetDist = distToGoal;
-                    closest = v;
+                bool isExcluded = (m_excludedVantageNodes.find(v->name) != m_excludedVantageNodes.end());
+                float penalty = isExcluded ? 5000.0f : 0.0f;
+                float score = distToGoal + penalty + (v->minDistanceFromSrc * 0.02f);
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestFrontierNode = v;
                 }
             }
         }
 
-        if (closest != nullptr) {
-            Vertex3D* curr = closest;
+        if (bestFrontierNode != nullptr) {
+            Vertex3D* curr = bestFrontierNode;
             while (curr != nullptr) {
                 m_cachedPathNames.push_back(curr->name);
                 curr = curr->parent;
             }
             std::reverse(m_cachedPathNames.begin(), m_cachedPathNames.end());
             m_pathStats.isPartial = true;
-            m_pathStats.distanceToGoal = minTargetDist;
-            m_pathStats.closestApproachNodeName = closest->name;
+            m_pathStats.distanceToGoal = Vector3Distance(bestFrontierNode->position, m_endNode->position);
+            m_pathStats.closestApproachNodeName = bestFrontierNode->name;
         }
     }
 
@@ -441,35 +444,43 @@ void DijkstraSolver3D::solveWithHistory(Vertex3D* start, Vertex3D* end,
     }
 
     if (!pathFound) {
-        // Fallback: Best-Effort Closest Approach Standoff to Destination
-        Vertex3D* closest = nullptr;
-        float minTargetDist = std::numeric_limits<float>::infinity();
+        // Fallback: Breadth-First / Detour Frontier Selection
+        Vertex3D* bestFrontierNode = nullptr;
+        float bestScore = std::numeric_limits<float>::infinity();
 
         for (Vertex3D* v : m_allVertices) {
             auto it = distances.find(v->name);
             if (v != m_startNode && it != distances.end() && !std::isinf(it->second) && !parents[v->name].empty()) {
                 float distToGoal = Vector3Distance(v->position, m_endNode->position);
-                if (distToGoal < minTargetDist) {
-                    minTargetDist = distToGoal;
-                    closest = v;
+                bool isExcluded = (m_excludedVantageNodes.find(v->name) != m_excludedVantageNodes.end());
+                float penalty = isExcluded ? 5000.0f : 0.0f;
+                float score = distToGoal + penalty + (it->second * 0.02f);
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestFrontierNode = v;
                 }
             }
         }
 
-        if (closest != nullptr) {
+        if (bestFrontierNode != nullptr) {
             pathFound = true;
             m_pathStats.isPartial = true;
-            m_pathStats.distanceToGoal = minTargetDist;
-            m_pathStats.closestApproachNodeName = closest->name;
+            float targetDist = Vector3Distance(bestFrontierNode->position, m_endNode->position);
+            m_pathStats.distanceToGoal = targetDist;
+            m_pathStats.closestApproachNodeName = bestFrontierNode->name;
 
-            std::string curr = closest->name;
+            std::string curr = bestFrontierNode->name;
             while (!curr.empty()) {
                 m_cachedPathNames.push_back(curr);
                 curr = parents[curr];
             }
             std::reverse(m_cachedPathNames.begin(), m_cachedPathNames.end());
 
-            recordSnapshot(closest->name, "", std::string("Closest Standoff Approach (") + TextFormat("%.1fm", minTargetDist) + " from goal) Established!", 0.0f, true, true);
+            bool isFlank = (m_excludedVantageNodes.find(bestFrontierNode->name) == m_excludedVantageNodes.end() && !m_excludedVantageNodes.empty());
+            std::string statusMsg = isFlank 
+                ? (std::string("Flanking Detour Approach (") + TextFormat("%.1fm", targetDist) + " to goal) Established!")
+                : (std::string("Closest Standoff Approach (") + TextFormat("%.1fm", targetDist) + " from goal) Established!");
+            recordSnapshot(bestFrontierNode->name, "", statusMsg, 0.0f, true, true);
         } else {
             m_pathStats.isPartial = false;
             m_pathStats.distanceToGoal = 0.0f;

@@ -41,6 +41,6 @@ private:
     Texture2D m_sharedTexture = {};
     int m_currentCenterCX = 999999;
     int m_currentCenterCZ = 999999;
-    int m_radius = 1; // 3x3 active grid (9 chunks = 192m x 192m)
+    int m_radius = 3; // 7x7 active grid (49 chunks = 448m x 448m coverage)
     bool m_initialized = false;
 };

@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <queue>
 #include <memory>
 #include <limits>
@@ -102,11 +103,18 @@ public:
     float getDistanceToGoal() const { return m_pathStats.distanceToGoal; }
     bool isNeuralMode() const { return m_isNeuralMode; }
 
+    // Anti-Looping & Frontier Exploration Management
+    void setExcludedVantageNodes(const std::unordered_set<std::string>& excluded) { m_excludedVantageNodes = excluded; }
+    void addExcludedVantageNode(const std::string& name) { m_excludedVantageNodes.insert(name); }
+    void clearExcludedVantageNodes() { m_excludedVantageNodes.clear(); }
+    const std::unordered_set<std::string>& getExcludedVantageNodes() const { return m_excludedVantageNodes; }
+
 private:
     void computePathStats();
 
     CostWeights m_weights;
     bool m_isNeuralMode = false;
+    std::unordered_set<std::string> m_excludedVantageNodes;
     Vertex3D* m_startNode = nullptr;
     Vertex3D* m_endNode = nullptr;
     std::vector<Vertex3D*> m_allVertices;

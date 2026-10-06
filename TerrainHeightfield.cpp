@@ -274,8 +274,8 @@ void TerrainHeightfield::generate() {
     }
 
     // 2. Construct Circular Planetary Globe Mesh (Diameter = 1,440m with 360-degree curved horizon)
-    const int numRings = 64;
-    const int numSectors = 72; // 5 degrees per sector
+    const int numRings = 96;
+    const int numSectors = 96; // 3.75 degrees per sector for ultra-smooth topography
     const float horizonRadius = 720.0f;
 
     int numVertices = 1 + numRings * numSectors;
@@ -409,8 +409,8 @@ void TerrainHeightfield::generate() {
 }
 
 void TerrainHeightfield::generateSurfaceTexture() {
-    const int texW = 1024;
-    const int texH = 1024;
+    const int texW = 2048;
+    const int texH = 2048;
 
     Image img = GenImageColor(texW, texH, Color{ 210, 115, 75, 255 });
     Color* pixels = static_cast<Color*>(img.data);
@@ -420,25 +420,62 @@ void TerrainHeightfield::generateSurfaceTexture() {
             float u = static_cast<float>(x) / texW;
             float v = static_cast<float>(y) / texH;
 
-            // Multi-frequency noise for sand grain and dunes
-            float n1 = samplePerlin(u * 12.0f, v * 12.0f);
-            float n2 = samplePerlin(u * 36.0f, v * 36.0f);
-            float n3 = samplePerlin(u * 128.0f, v * 128.0f);
+            // Multi-octave planetary noise synthesis
+            float n1 = samplePerlin(u * 16.0f, v * 16.0f);
+            float n2 = samplePerlin(u * 48.0f, v * 48.0f);
+            float n3 = samplePerlin(u * 144.0f, v * 144.0f);
+            float n4 = samplePerlin(u * 384.0f, v * 384.0f);
 
-            // Sand dune ripples
-            float ripples = sinf(u * 60.0f + n1 * 4.0f) * 0.08f;
-            float grain = n1 * 0.45f + n2 * 0.35f + n3 * 0.20f + ripples;
+            // Wind-swept aerodynamic ripples
+            float ripples = sinf(u * 80.0f + n1 * 5.0f + v * 30.0f) * 0.09f;
+            float detailGrain = n1 * 0.40f + n2 * 0.30f + n3 * 0.20f + n4 * 0.10f + ripples;
 
-            // Natural Martian ochre palette with micro-contrast
-            float r = Clamp(205.0f + grain * 45.0f, 160.0f, 245.0f);
-            float g = Clamp(105.0f + grain * 35.0f, 75.0f, 145.0f);
-            float b = Clamp(68.0f + grain * 25.0f, 48.0f, 100.0f);
+            float r = 210.0f;
+            float g = 115.0f;
+            float b = 75.0f;
 
-            // Scattered regolith pebbles / basalt flecks
-            if (((x * 7919 + y * 65537) & 0x7F) < 3) {
-                r *= 0.6f;
-                g *= 0.6f;
-                b *= 0.6f;
+            if (m_preset == TerrainPreset::SCREE_SLOPE) {
+                // LUNAR HIGHLANDS / MARE PALETTE (Silvery gray regolith + white anorthosite flecks)
+                float baseGray = 175.0f + detailGrain * 50.0f;
+                r = Clamp(baseGray + 5.0f, 110.0f, 240.0f);
+                g = Clamp(baseGray, 110.0f, 235.0f);
+                b = Clamp(baseGray + 10.0f, 115.0f, 245.0f);
+
+                // Bright micro-impact ejecta sparkles & dark basalt specks
+                uint32_t pHash = (x * 7919 + y * 65537);
+                if ((pHash & 0x7F) < 3) {
+                    r = 250.0f; g = 252.0f; b = 255.0f; // Bright quartz/anorthosite crystal
+                } else if ((pHash & 0x7F) > 124) {
+                    r *= 0.45f; g *= 0.45f; b *= 0.50f; // Dark ilmenite / basalt grain
+                }
+            } else if (m_preset == TerrainPreset::BOULDER_SLALOM) {
+                // MARTIAN CANYON PALETTE (Deep terracotta, banded sedimentary iron oxide strata)
+                float strata = sinf(v * 45.0f + n2 * 6.0f) * 18.0f;
+                r = Clamp(195.0f + detailGrain * 48.0f + strata, 130.0f, 245.0f);
+                g = Clamp(90.0f + detailGrain * 32.0f + strata * 0.5f, 55.0f, 140.0f);
+                b = Clamp(55.0f + detailGrain * 22.0f, 35.0f, 95.0f);
+
+                if (((x * 7919 + y * 65537) & 0x7F) < 4) {
+                    r *= 0.55f; g *= 0.55f; b *= 0.55f;
+                }
+            } else if (m_preset == TerrainPreset::ACIDALIA_PLANITIA) {
+                // EARTH/DESERT PROVING GROUND (Warm golden dunes, desert varnish & fine pebbles)
+                r = Clamp(225.0f + detailGrain * 35.0f, 175.0f, 255.0f);
+                g = Clamp(165.0f + detailGrain * 30.0f, 120.0f, 210.0f);
+                b = Clamp(110.0f + detailGrain * 25.0f, 75.0f, 155.0f);
+
+                if (((x * 7919 + y * 65537) & 0x7F) < 3) {
+                    r = 95.0f; g = 80.0f; b = 70.0f; // Desert varnish pebble
+                }
+            } else {
+                // OLYMPUS CRATER (Rich Martian rust ochre with basalt flecks)
+                r = Clamp(212.0f + detailGrain * 42.0f, 155.0f, 250.0f);
+                g = Clamp(112.0f + detailGrain * 32.0f, 75.0f, 150.0f);
+                b = Clamp(72.0f + detailGrain * 22.0f, 45.0f, 105.0f);
+
+                if (((x * 7919 + y * 65537) & 0x7F) < 3) {
+                    r *= 0.55f; g *= 0.55f; b *= 0.55f;
+                }
             }
 
             pixels[y * texW + x] = Color{
@@ -485,35 +522,76 @@ float TerrainHeightfield::getSlopeAngleRad(float x, float z) const {
 Color TerrainHeightfield::getSlopeColor(float slopeRad, Vector3 normal) const {
     float slopeDeg = slopeRad * RAD2DEG;
 
-    // Slope modulation tint for texture
-    // Slope < 15 deg: Vibrant Martian dust highlights
-    // Slope 15 - 30 deg: Exposed mineral bedrock
-    // Slope > 30 deg: Darker basalt ridge
     Color base;
-    if (slopeDeg < 15.0f) {
-        base = Color{ 255, 245, 235, 255 };
-    } else if (slopeDeg <= 30.0f) {
-        float t = (slopeDeg - 15.0f) / 15.0f;
-        base = Color{
-            static_cast<unsigned char>(Lerp(255, 195, t)),
-            static_cast<unsigned char>(Lerp(245, 165, t)),
-            static_cast<unsigned char>(Lerp(235, 150, t)),
-            255
-        };
+    if (m_preset == TerrainPreset::SCREE_SLOPE) {
+        // Lunar Slope Shading: Pristine high-albedo regolith on flats, dark fractured scree on cliffs
+        if (slopeDeg < 14.0f) {
+            base = Color{ 245, 245, 250, 255 };
+        } else if (slopeDeg <= 28.0f) {
+            float t = (slopeDeg - 14.0f) / 14.0f;
+            base = Color{
+                static_cast<unsigned char>(Lerp(245, 160, t)),
+                static_cast<unsigned char>(Lerp(245, 160, t)),
+                static_cast<unsigned char>(Lerp(250, 170, t)),
+                255
+            };
+        } else {
+            float t = std::min(1.0f, (slopeDeg - 28.0f) / 14.0f);
+            base = Color{
+                static_cast<unsigned char>(Lerp(160, 95, t)),
+                static_cast<unsigned char>(Lerp(160, 95, t)),
+                static_cast<unsigned char>(Lerp(170, 105, t)),
+                255
+            };
+        }
+    } else if (m_preset == TerrainPreset::BOULDER_SLALOM) {
+        // Canyon Slalom Shading: Sunlit ochre wash on flats, dark layered rock on sheer walls
+        if (slopeDeg < 14.0f) {
+            base = Color{ 255, 235, 215, 255 };
+        } else if (slopeDeg <= 28.0f) {
+            float t = (slopeDeg - 14.0f) / 14.0f;
+            base = Color{
+                static_cast<unsigned char>(Lerp(255, 175, t)),
+                static_cast<unsigned char>(Lerp(235, 130, t)),
+                static_cast<unsigned char>(Lerp(215, 110, t)),
+                255
+            };
+        } else {
+            float t = std::min(1.0f, (slopeDeg - 28.0f) / 14.0f);
+            base = Color{
+                static_cast<unsigned char>(Lerp(175, 110, t)),
+                static_cast<unsigned char>(Lerp(130, 75, t)),
+                static_cast<unsigned char>(Lerp(110, 60, t)),
+                255
+            };
+        }
     } else {
-        float t = std::min(1.0f, (slopeDeg - 30.0f) / 15.0f);
-        base = Color{
-            static_cast<unsigned char>(Lerp(195, 135, t)),
-            static_cast<unsigned char>(Lerp(165, 115, t)),
-            static_cast<unsigned char>(Lerp(150, 105, t)),
-            255
-        };
+        // Standard Martian (Olympus / Acidalia): Fine dust plains, weathered bedrock, dark volcanic ridges
+        if (slopeDeg < 15.0f) {
+            base = Color{ 255, 245, 235, 255 };
+        } else if (slopeDeg <= 30.0f) {
+            float t = (slopeDeg - 15.0f) / 15.0f;
+            base = Color{
+                static_cast<unsigned char>(Lerp(255, 190, t)),
+                static_cast<unsigned char>(Lerp(245, 155, t)),
+                static_cast<unsigned char>(Lerp(235, 135, t)),
+                255
+            };
+        } else {
+            float t = std::min(1.0f, (slopeDeg - 30.0f) / 15.0f);
+            base = Color{
+                static_cast<unsigned char>(Lerp(190, 125, t)),
+                static_cast<unsigned char>(Lerp(155, 95, t)),
+                static_cast<unsigned char>(Lerp(135, 80, t)),
+                255
+            };
+        }
     }
 
-    // Directional solar lighting for crisp topography relief
+    // Directional solar lighting with soft ambient fill for crisp topography relief
     Vector3 sunDir = Vector3Normalize(Vector3{ 0.4f, 0.85f, 0.35f });
     float diffuse = std::max(0.0f, Vector3DotProduct(normal, sunDir));
-    float lightFactor = 0.45f + 0.55f * diffuse; // Ambient + Diffuse
+    float lightFactor = 0.42f + 0.58f * diffuse; // Ambient + Diffuse
 
     return Color{
         static_cast<unsigned char>(Clamp(base.r * lightFactor, 0.0f, 255.0f)),

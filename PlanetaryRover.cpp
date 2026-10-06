@@ -1,5 +1,6 @@
 #include "PlanetaryRover.h"
 #include "PhysicsWorld.h"
+#include "TerrainHeightfield.h"
 #include "Vertex3D.h"
 #include <rlgl.h>
 #include <cmath>
@@ -23,6 +24,9 @@ PlanetaryRover::PlanetaryRover()
     , m_odometerMeters(0.0f)
     , m_batteryJoules(0.0f)
     , m_currentPowerWatts(0.0f)
+    , m_batteryCapacityJoules(1000000.0f) // 1,000 kJ (1 MJ)
+    , m_currentBatteryJoules(1000000.0f)  // Starts full at 100%
+    , m_rtgRechargeWatts(120.0f)          // +120W RTG continuous recharge
     , m_suspensionRestLength(0.48f)
     , m_wheelRadius(0.40f)
     , m_wheelWidth(0.35f)
@@ -138,9 +142,11 @@ void PlanetaryRover::reset(PhysicsWorld& physics, Vector3 spawnPos, float yawAng
     m_isPartialPath = false;
     m_standoffDist = 0.0f;
     m_isAtStandoffVantage = false;
+    m_isSeekingDetour = false;
     m_standoffTimer = 0.0f;
     m_isDirectHoming = false;
     m_currentWaypointIndex = 0;
+    m_currentBatteryJoules = m_batteryCapacityJoules;
 
     for (int i = 0; i < 4; ++i) {
         m_wheels[i].suspensionLength = m_suspensionRestLength;
@@ -170,6 +176,12 @@ void PlanetaryRover::setPath(const std::vector<const Vertex3D*>& pathNodes, bool
     m_standoffDist = standoffDist;
     m_finalGoalPos = finalGoalPos;
     m_isAtStandoffVantage = false;
+    if (!isPartial) {
+        m_isSeekingDetour = false;
+    }
+    if (isPartial && !pathNodes.empty() && pathNodes.back()) {
+        m_lastVantageNodeName = pathNodes.back()->name;
+    }
     m_standoffTimer = 0.0f;
     m_isDirectHoming = false;
     m_hasReachedGoal = false;
@@ -258,7 +270,7 @@ Camera3D PlanetaryRover::getCamera(const Camera3D& orbitCamera) const {
     return cam;
 }
 
-void PlanetaryRover::update(PhysicsWorld& physics, float dt) {
+void PlanetaryRover::update(PhysicsWorld& physics, float dt, const TerrainHeightfield* terrain) {
     if (m_chassisBodyId.IsInvalid()) return;
 
     // 1. Fetch latest physical transform and velocity from Jolt
@@ -279,22 +291,24 @@ void PlanetaryRover::update(PhysicsWorld& physics, float dt) {
     }
 
     // 4. Raycast suspension, tire dynamics, TCS, and drive forces
-    updateSuspensionAndTires(physics, dt);
+    updateSuspensionAndTires(physics, dt, terrain);
 
-    // 5. Anti-Subsurface Floor Clamp: Guarantee chassis never sinks or clips beneath physical terrain
+    // 5. Anti-Subsurface Solid Floor Guarantee: Chassis CANNOT sink beneath terrain
+    float terrainY = terrain ? terrain->getHeight(m_position.x, m_position.z) : -1000.0f;
     Vector3 gNormal = Vector3{ 0, 1, 0 };
     Vector3 gHit = m_position;
-    Vector3 rStart = Vector3{ m_position.x, m_position.y + 6.0f, m_position.z };
-    Vector3 rEnd   = Vector3{ m_position.x, m_position.y - 6.0f, m_position.z };
-    if (physics.raycast(rStart, rEnd, &gHit, &gNormal, m_chassisBodyId)) {
-        float minSafeY = gHit.y + m_halfExtents.y + 0.12f;
-        if (m_position.y < minSafeY) {
-            m_position.y = minSafeY;
-            physics.setBodyTransform(m_chassisBodyId, m_position, m_rotation);
-            Vector3 vel = m_linearVelocity;
-            if (vel.y < 0.0f) vel.y = 0.0f;
-            physics.setBodyLinearVelocity(m_chassisBodyId, vel);
-        }
+    Vector3 rStart = Vector3{ m_position.x, m_position.y + 8.0f, m_position.z };
+    Vector3 rEnd   = Vector3{ m_position.x, m_position.y - 8.0f, m_position.z };
+    bool hasHit = physics.raycast(rStart, rEnd, &gHit, &gNormal, m_chassisBodyId);
+    float groundSurfaceY = hasHit ? std::max(gHit.y, terrainY) : terrainY;
+
+    float minSafeY = groundSurfaceY + m_halfExtents.y + 0.12f;
+    if (m_position.y < minSafeY) {
+        m_position.y = minSafeY;
+        physics.setBodyTransform(m_chassisBodyId, m_position, m_rotation);
+        Vector3 vel = m_linearVelocity;
+        if (vel.y < 0.0f) vel.y = 0.0f;
+        physics.setBodyLinearVelocity(m_chassisBodyId, vel);
     }
 }
 
@@ -339,33 +353,65 @@ void PlanetaryRover::updatePurePursuit(PhysicsWorld& physics, float dt) {
     // Check distance to goal (last waypoint)
     Vector3 goalPos = m_waypoints.back();
     float distToGoal = Vector2Distance(Vector2{ m_position.x, m_position.z }, Vector2{ goalPos.x, goalPos.z });
+    float distToFinalGoal = Vector2Distance(Vector2{ m_position.x, m_position.z }, Vector2{ m_finalGoalPos.x, m_finalGoalPos.z });
 
-    if (distToGoal < 1.6f) {
+    // Battery depletion power cutoff
+    if (isBatteryDepleted()) {
+        m_throttleInput = 0.0f;
+        m_brakeInput = 1.0f;
+        m_isReversing = false;
+        return;
+    }
+
+    if (distToFinalGoal < 2.0f) {
+        // Absolute final target beacon reached!
+        m_hasReachedGoal = true;
+        m_isSeekingDetour = false;
+        m_isAtStandoffVantage = false;
+        m_standoffTimer = 0.0f;
+        m_throttleInput = 0.0f;
+        m_brakeInput = 1.0f;
+        m_steerInput = 0.0f;
+        m_isReversing = false;
+        return;
+    }
+
+    if (distToGoal < 2.2f) {
         if (m_isPartialPath && !m_isDirectHoming) {
+            // Reached standoff vantage point on partial route:
+            // NEVER halt! Actively initiate dynamic circumvention & detour around the barrier!
+            m_isSeekingDetour = true;
             m_isAtStandoffVantage = true;
-            m_hasReachedGoal = false;
-            m_standoffTimer += dt;
-
-            // When reaching standoff vantage point, pause briefly (0.5s) to scan terrain,
-            // then trigger an active detour replan and attempt safe drive towards final goal/nearest node
-            if (m_standoffTimer >= 0.5f) {
-                m_standoffTimer = 0.0f;
-                triggerReplan("STANDOFF PROBING SAFE DETOUR", m_finalGoalPos);
-
-                float distToFinal = Vector2Distance(Vector2{ m_position.x, m_position.z }, Vector2{ m_finalGoalPos.x, m_finalGoalPos.z });
-                if (distToFinal > 1.8f) {
-                    engageDirectHoming(m_finalGoalPos);
-                    return;
+            m_hasReachedGoal = false; // Rover keeps driving unless fuel is depleted!
+            
+            // Record visited vantage node into history to prevent re-picking / looping
+            if (!m_lastVantageNodeName.empty()) {
+                if (m_visitedVantageHistory.empty() || m_visitedVantageHistory.back() != m_lastVantageNodeName) {
+                    m_visitedVantageHistory.push_back(m_lastVantageNodeName);
+                    if (m_visitedVantageHistory.size() > 32) {
+                        m_visitedVantageHistory.erase(m_visitedVantageHistory.begin());
+                    }
                 }
             }
 
-            m_throttleInput = 0.0f;
-            m_brakeInput = 0.6f;
-            m_steerInput = 0.0f;
-            m_isReversing = false;
-            return;
+            // Request route recalculation for wide flanking path
+            triggerReplan("VANTAGE POINT REACHED - SEEKING CIRCUMVENTION DETOUR");
+
+            // Flanking perimeter navigation: drive laterally around the barrier
+            Vector3 toFinal = Vector3Subtract(m_finalGoalPos, m_position);
+            Vector3 finalDir = (Vector3LengthSqr(toFinal) > 0.01f) ? Vector3Normalize(toFinal) : m_forward;
+            Vector3 flankDir = Vector3Normalize(Vector3CrossProduct(finalDir, Vector3{ 0, 1, 0 }));
+            if (Vector3DotProduct(flankDir, m_right) < 0.0f) {
+                flankDir = Vector3Negate(flankDir);
+            }
+
+            Vector3 detourWaypoint = Vector3Add(m_position, Vector3Scale(m_forward, 3.5f));
+            detourWaypoint = Vector3Add(detourWaypoint, Vector3Scale(flankDir, 4.5f));
+            m_targetWaypoint = detourWaypoint;
         } else {
+            // Reached end of current full path segment
             m_hasReachedGoal = true;
+            m_isSeekingDetour = false;
             m_isAtStandoffVantage = false;
             m_standoffTimer = 0.0f;
             m_throttleInput = 0.0f;
@@ -620,7 +666,8 @@ void PlanetaryRover::updatePurePursuit(PhysicsWorld& physics, float dt) {
     }
 }
 
-void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
+void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt, const TerrainHeightfield* terrain) {
+    const float extraRayHeight = 0.35f;
     const float maxRayDist = m_suspensionRestLength + m_wheelRadius + 0.35f;
     m_tcsEngagedOverall = false;
 
@@ -664,22 +711,34 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
         Vector3 localMount = w.mountOffset;
         w.worldMountPos = Vector3Add(m_position, Vector3RotateByQuaternion(localMount, m_rotation));
 
-        // Downward raycast along chassis negative up vector
+        // Downward raycast along chassis negative up vector (elevated by extraRayHeight so origin is never underground)
+        Vector3 rayStart = Vector3Add(w.worldMountPos, Vector3Scale(m_up, extraRayHeight));
         Vector3 rayDir = Vector3Scale(m_up, -1.0f);
-        Vector3 rayEnd = Vector3Add(w.worldMountPos, Vector3Scale(rayDir, maxRayDist));
+        Vector3 rayEnd = Vector3Add(rayStart, Vector3Scale(rayDir, maxRayDist + extraRayHeight));
 
         Vector3 hitPoint, hitNormal;
-        bool grounded = physics.raycast(w.worldMountPos, rayEnd, &hitPoint, &hitNormal, m_chassisBodyId);
+        bool grounded = physics.raycast(rayStart, rayEnd, &hitPoint, &hitNormal, m_chassisBodyId);
+
+        // Solid analytical ground floor fallback
+        if (!grounded && terrain) {
+            float terrainH = terrain->getHeight(w.worldMountPos.x, w.worldMountPos.z);
+            if (w.worldMountPos.y - (m_suspensionRestLength + m_wheelRadius) <= terrainH + 0.15f) {
+                hitPoint = Vector3{ w.worldMountPos.x, terrainH, w.worldMountPos.z };
+                hitNormal = terrain->getNormal(w.worldMountPos.x, w.worldMountPos.z);
+                grounded = true;
+            }
+        }
         w.isGrounded = grounded;
 
         if (grounded) {
-            float hitDist = Vector3Distance(w.worldMountPos, hitPoint);
+            float hitDist = Vector3DotProduct(Vector3Subtract(w.worldMountPos, hitPoint), m_up);
+            if (hitDist < 0.05f) hitDist = 0.05f;
             w.contactPoint  = hitPoint;
             w.contactNormal = hitNormal;
 
             // Distance along suspension ray to place wheel hub so tire contacts ground
             float desiredHubDist = hitDist - m_wheelRadius;
-            w.suspensionLength = Clamp(desiredHubDist, 0.12f, m_suspensionRestLength + 0.25f);
+            w.suspensionLength = Clamp(desiredHubDist, 0.10f, m_suspensionRestLength + 0.25f);
             w.suspensionCompression = Clamp(m_suspensionRestLength - w.suspensionLength, 0.0f, m_suspensionRestLength);
             w.worldWheelPos = Vector3Add(w.worldMountPos, Vector3Scale(rayDir, w.suspensionLength));
 
@@ -736,7 +795,8 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
 
             // Motor Drive Force (All-Wheel Drive 4WD scaled with gravity & incline capability)
             const float maxMotorForcePerWheel = cornerWeight * 3.4f;
-            float driveForceMag = m_throttleInput * maxMotorForcePerWheel * tcsFactor;
+            float throttle = isBatteryDepleted() ? 0.0f : m_throttleInput;
+            float driveForceMag = throttle * maxMotorForcePerWheel * tcsFactor;
 
             // Braking Force
             if (m_brakeInput > 0.02f) {
@@ -829,9 +889,14 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
         }
     }
 
-    // Energy tracking
+    // Energy tracking & Battery State of Charge Integration
     m_currentPowerWatts = totalWorkRate;
     m_batteryJoules += totalWorkRate * dt;
+
+    float avionicsBaseWatts = 30.0f; // Sensors, telemetry, LIDAR, avionics
+    float totalDrawWatts = totalWorkRate + avionicsBaseWatts;
+    float netWatts = totalDrawWatts - m_rtgRechargeWatts;
+    m_currentBatteryJoules = Clamp(m_currentBatteryJoules - netWatts * dt, 0.0f, m_batteryCapacityJoules);
 }
 
 void PlanetaryRover::selfRight(PhysicsWorld& physics) {

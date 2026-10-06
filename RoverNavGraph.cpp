@@ -74,7 +74,7 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
                 continue; // Node already exists in persistent memory! Preserved!
             }
 
-            float worldY = terrain.getHeight(worldX, worldZ) + 0.35f;
+            float worldY = terrain.getHeight(worldX, worldZ) + 0.85f;
             std::string name = "N_" + std::to_string(gx) + "_" + std::to_string(gz);
             Vertex3D* node = new Vertex3D(name, Vector3{ worldX, worldY, worldZ });
 
@@ -88,8 +88,8 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
             node->slopeAngleRad = acosf(dotUp);
             node->surfaceFriction = 0.70f;
 
-            // Realistic planetary rover mobility limit: slopes >= 15.5 deg are impassable to guarantee climbing safety and avoid getting stuck on high terrain
-            node->isWalkable = (node->slopeAngleRad < 15.5f * DEG2RAD);
+            // Realistic planetary rover mobility limit: slopes >= 22.0 deg are impassable to guarantee climbing safety
+            node->isWalkable = (node->slopeAngleRad < 22.0f * DEG2RAD);
 
             if (!node->isWalkable) {
                 node->state = NodeState::IMPASSABLE;
@@ -126,7 +126,7 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
             auto it = m_spatialNodes.find(nKey);
             if (it != m_spatialNodes.end()) {
                 Vertex3D* v = it->second;
-                if (!v->isWalkable || v->slopeAngleRad > 13.0f * DEG2RAD) {
+                if (!v->isWalkable || v->slopeAngleRad > 18.0f * DEG2RAD) {
                     nextToCliff = true;
                 }
                 if (v->slopeAngleRad > maxAdjSlope) {
@@ -146,7 +146,7 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
                 v->neighbors.emplace_back(u->name, dist);
 
                 // Add unique undirected edge to rendering list
-                bool steep = (!u->isWalkable || !v->isWalkable || segSlopeRad >= 15.5f * DEG2RAD);
+                bool steep = (!u->isWalkable || !v->isWalkable || segSlopeRad >= 22.0f * DEG2RAD);
                 Color edgeColor = steep ? Color{ 180, 40, 40, 75 } : Color{ 60, 205, 255, 175 };
                 m_edges.push_back({ u->position, v->position, edgeColor, steep, u->name, v->name });
                 if (steep) {
@@ -522,11 +522,19 @@ void RoverNavGraph::setStartNode(Vertex3D* node) {
 
 void RoverNavGraph::ensureCorridor(const TerrainHeightfield& terrain, Vector3 startPos, Vector3 endPos, float spacing) {
     float totalDist = Vector3Distance(startPos, endPos);
-    int steps = static_cast<int>(ceilf(totalDist / 48.0f));
+    Vector3 dir = (totalDist > 0.1f) ? Vector3Scale(Vector3Subtract(endPos, startPos), 1.0f / totalDist) : Vector3{ 0, 0, 1 };
+    Vector3 lat = Vector3Normalize(Vector3CrossProduct(dir, Vector3{ 0, 1, 0 }));
+    if (Vector3LengthSqr(lat) < 0.1f) lat = Vector3{ 1, 0, 0 };
+
+    int steps = static_cast<int>(ceilf(totalDist / 40.0f));
     for (int i = 0; i <= steps; ++i) {
         float t = (steps > 0) ? (static_cast<float>(i) / steps) : 0.0f;
         Vector3 p = Vector3Lerp(startPos, endPos, t);
-        generatePersistentPlanetaryGrid(terrain, p, 108.0f, spacing);
+        // Centerline coverage
+        generatePersistentPlanetaryGrid(terrain, p, 115.0f, spacing);
+        // Left & Right flanking detour coverage (allowing wide detours around ridges and boulder clusters)
+        generatePersistentPlanetaryGrid(terrain, Vector3Add(p, Vector3Scale(lat, 55.0f)), 95.0f, spacing);
+        generatePersistentPlanetaryGrid(terrain, Vector3Add(p, Vector3Scale(lat, -55.0f)), 95.0f, spacing);
     }
 }
 
