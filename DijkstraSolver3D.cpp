@@ -69,8 +69,8 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
         return std::numeric_limits<float>::infinity();
     }
 
-    // Hard traversability threshold: slopes > 22 deg are impassable for rovers
-    constexpr float MAX_TRAVERSABLE_SLOPE = 22.0f * DEG2RAD;
+    // Hard traversability threshold: slopes > 28 deg are impassable for rovers (physical rollover limit)
+    constexpr float MAX_TRAVERSABLE_SLOPE = 28.0f * DEG2RAD;
     if (u->slopeAngleRad > MAX_TRAVERSABLE_SLOPE || v->slopeAngleRad > MAX_TRAVERSABLE_SLOPE) {
         return std::numeric_limits<float>::infinity();
     }
@@ -104,13 +104,13 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
         sideSlopeRad = localSlope * sinSide;
         float sideSlopeDeg = sideSlopeRad * RAD2DEG;
 
-        // Above 18 degrees cross-slope: critical lateral rollover hazard -> strictly impassable
-        if (sideSlopeDeg > 18.0f) {
+        // Above 24 degrees cross-slope: critical lateral rollover hazard -> strictly impassable
+        if (sideSlopeDeg > 24.0f) {
             return std::numeric_limits<float>::infinity();
         }
-        // Above 6 degrees cross-slope: progressive penalty to funnel paths to flat terrain / valleys
-        if (sideSlopeDeg > 6.0f) {
-            float excess = (sideSlopeDeg - 6.0f) / 12.0f;
+        // Above 8 degrees cross-slope: progressive penalty to funnel paths to flat terrain / valleys
+        if (sideSlopeDeg > 8.0f) {
+            float excess = (sideSlopeDeg - 8.0f) / 16.0f;
             sideSlopePenalty = 5.0f * (excess * excess);
         }
     }
@@ -120,8 +120,8 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
     float bumpPenalty = 0.0f;
     float normalDot = Clamp(Vector3DotProduct(u->surfaceNormal, v->surfaceNormal), -1.0f, 1.0f);
     float deltaNormal = 1.0f - normalDot;
-    // Divergence > 35 degrees indicates sharp knife-edge crest that risks high-centering chassis
-    if (deltaNormal > 0.18f) {
+    // Divergence > 45 degrees indicates sharp knife-edge crest that risks high-centering chassis
+    if (deltaNormal > 0.28f) {
         return std::numeric_limits<float>::infinity();
     }
     if (deltaNormal > 0.02f) {
@@ -130,7 +130,7 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
 
     // 4. Cliff & Drop-Off Proximity Standoff Buffer
     float maxCliffProx = std::max(u->cliffProximity, v->cliffProximity);
-    if (maxCliffProx >= 1.0f) {
+    if (maxCliffProx >= 1.2f) {
         return std::numeric_limits<float>::infinity();
     }
     float cliffBufferPenalty = 4.0f * (maxCliffProx * maxCliffProx);

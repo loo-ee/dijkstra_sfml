@@ -134,7 +134,7 @@ public:
 
         // Clamp to positive cost domain
         float costMult = std::max(1.0f, sum);
-        bool passable = (costMult < 35.0f);
+        bool passable = (costMult < 90.0f);
 
         auto end = std::chrono::high_resolution_clock::now();
         float micros = std::chrono::duration<float, std::micro>(end - start).count();

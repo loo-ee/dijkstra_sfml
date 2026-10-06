@@ -88,8 +88,8 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
             node->slopeAngleRad = acosf(dotUp);
             node->surfaceFriction = 0.70f;
 
-            // Realistic rover mobility limit: slopes >= 22 deg (~40% grade) are impassable
-            node->isWalkable = (node->slopeAngleRad < 22.0f * DEG2RAD);
+            // Realistic rover mobility limit: slopes >= 28 deg (physical rollover hazard) are impassable
+            node->isWalkable = (node->slopeAngleRad < 28.0f * DEG2RAD);
 
             if (!node->isWalkable) {
                 node->state = NodeState::IMPASSABLE;
@@ -346,8 +346,20 @@ void RoverNavGraph::renderEdges() const {
 }
 
 void RoverNavGraph::validateEdgesWithPhysics(PhysicsWorld& physics, float clearanceOffset) {
-    Vector3 upOffset = { 0.0f, clearanceOffset, 0.0f };
     m_blockedEdgesMap.clear();
+    const auto& boulders = physics.getBoulders();
+
+    auto isEdgeNearBoulder = [](Vector3 A, Vector3 B, Vector3 C, float radius) {
+        Vector3 AB = Vector3Subtract(B, A);
+        Vector3 AC = Vector3Subtract(C, A);
+        float abLenSq = Vector3LengthSqr(AB);
+        if (abLenSq < 1e-4f) {
+            return Vector3DistanceSqr(A, C) <= (radius * radius);
+        }
+        float t = Clamp(Vector3DotProduct(AC, AB) / abLenSq, 0.0f, 1.0f);
+        Vector3 closestPoint = Vector3Add(A, Vector3Scale(AB, t));
+        return Vector3DistanceSqr(closestPoint, C) <= (radius * radius);
+    };
 
     for (auto& edge : m_edges) {
         std::string key = (edge.startNode < edge.endNode) ? 
@@ -359,13 +371,18 @@ void RoverNavGraph::validateEdgesWithPhysics(PhysicsWorld& physics, float cleara
             continue;
         }
 
-        Vector3 from = Vector3Add(edge.start, upOffset);
-        Vector3 to = Vector3Add(edge.end, upOffset);
+        bool hitsBoulder = false;
+        for (const auto& b : boulders) {
+            // Boulder radius + clearance offset buffer
+            if (isEdgeNearBoulder(edge.start, edge.end, b.pos, b.radius + clearanceOffset)) {
+                hitsBoulder = true;
+                break;
+            }
+        }
 
-        Vector3 hitPoint;
-        if (physics.raycast(from, to, &hitPoint)) {
+        if (hitsBoulder) {
             edge.isBlocked = true;
-            edge.color = Color{ 220, 45, 45, 230 }; // Impassable collision obstruction
+            edge.color = Color{ 220, 45, 45, 230 }; // Impassable boulder collision obstruction
             m_blockedEdgesMap[key] = true;
         }
     }

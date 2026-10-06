@@ -299,7 +299,8 @@ int main() {
                                           navGraph.getVertices(), navGraph.getBlockedEdgesMap());
                 const auto& newPath = dijkstra.getShortestPathNodes();
                 if (!newPath.empty()) {
-                    rover.setPath(newPath, dijkstra.isPartialPath(), dijkstra.getDistanceToGoal());
+                    Vector3 goalPos = navGraph.getEndNode() ? navGraph.getEndNode()->position : Vector3{ 0, 0, 0 };
+                    rover.setPath(newPath, dijkstra.isPartialPath(), dijkstra.getDistanceToGoal(), goalPos);
                 }
             }
             rover.clearReplanRequest();
@@ -352,7 +353,8 @@ int main() {
                     }
                     dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
                                               navGraph.getVertices(), navGraph.getBlockedEdgesMap());
-                    rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal());
+                    Vector3 goalPos = navGraph.getEndNode() ? navGraph.getEndNode()->position : Vector3{ 0, 0, 0 };
+                    rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal(), goalPos);
                 }
             }
         }
@@ -382,41 +384,20 @@ int main() {
         dijkstra.update(dt);
 
         // Cost Preset Selection Keys: 1, 2, 3, 4, 5
-        if (IsKeyPressed(KEY_ONE)) {
-            currentPresetIndex = 0;
-            dijkstra.applyPreset(0);
+        auto applyPresetAndRoute = [&](int presetIdx) {
+            currentPresetIndex = presetIdx;
+            dijkstra.applyPreset(presetIdx);
             dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
                                       navGraph.getVertices(), navGraph.getBlockedEdgesMap());
-            rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal());
-        }
-        if (IsKeyPressed(KEY_TWO)) {
-            currentPresetIndex = 1;
-            dijkstra.applyPreset(1);
-            dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
-                                      navGraph.getVertices(), navGraph.getBlockedEdgesMap());
-            rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal());
-        }
-        if (IsKeyPressed(KEY_THREE)) {
-            currentPresetIndex = 2;
-            dijkstra.applyPreset(2);
-            dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
-                                      navGraph.getVertices(), navGraph.getBlockedEdgesMap());
-            rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal());
-        }
-        if (IsKeyPressed(KEY_FOUR)) {
-            currentPresetIndex = 3;
-            dijkstra.applyPreset(3);
-            dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
-                                      navGraph.getVertices(), navGraph.getBlockedEdgesMap());
-            rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal());
-        }
-        if (IsKeyPressed(KEY_FIVE)) {
-            currentPresetIndex = 4;
-            dijkstra.applyPreset(4);
-            dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
-                                      navGraph.getVertices(), navGraph.getBlockedEdgesMap());
-            rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal());
-        }
+            Vector3 goalPos = navGraph.getEndNode() ? navGraph.getEndNode()->position : Vector3{ 0, 0, 0 };
+            rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal(), goalPos);
+        };
+
+        if (IsKeyPressed(KEY_ONE))   applyPresetAndRoute(0);
+        if (IsKeyPressed(KEY_TWO))   applyPresetAndRoute(1);
+        if (IsKeyPressed(KEY_THREE)) applyPresetAndRoute(2);
+        if (IsKeyPressed(KEY_FOUR))  applyPresetAndRoute(3);
+        if (IsKeyPressed(KEY_FIVE))  applyPresetAndRoute(4);
 
         // Phase 5: Planetary Rover Driving Controls & Camera Focus
         if (IsKeyPressed(KEY_TAB)) {

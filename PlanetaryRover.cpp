@@ -156,7 +156,7 @@ void PlanetaryRover::reset(PhysicsWorld& physics, Vector3 spawnPos, float yawAng
     m_chaseCamTarget = m_position;
 }
 
-void PlanetaryRover::setPath(const std::vector<const Vertex3D*>& pathNodes, bool isPartial, float standoffDist) {
+void PlanetaryRover::setPath(const std::vector<const Vertex3D*>& pathNodes, bool isPartial, float standoffDist, Vector3 finalGoalPos) {
     m_waypoints.clear();
     m_waypoints.reserve(pathNodes.size());
     for (const Vertex3D* node : pathNodes) {
@@ -166,6 +166,7 @@ void PlanetaryRover::setPath(const std::vector<const Vertex3D*>& pathNodes, bool
     }
     m_isPartialPath = isPartial;
     m_standoffDist = standoffDist;
+    m_finalGoalPos = finalGoalPos;
     m_isAtStandoffVantage = false;
     m_isDirectHoming = false;
     m_currentWaypointIndex = 0;
@@ -302,16 +303,33 @@ void PlanetaryRover::updatePurePursuit(PhysicsWorld& physics, float dt) {
     if (distToGoal < 1.6f) {
         if (m_isPartialPath && !m_isDirectHoming) {
             m_isAtStandoffVantage = true;
-            m_hasReachedGoal = false;
+            // In autonomous mode: do NOT halt permanently at standoff!
+            // Seamlessly transition to active off-road infiltration straight toward final goal beacon!
+            if (m_isAutonomous && Vector3LengthSqr(m_finalGoalPos) > 0.1f) {
+                m_waypoints.clear();
+                m_waypoints.push_back(m_finalGoalPos);
+                m_currentWaypointIndex = 0;
+                m_targetWaypoint = m_finalGoalPos;
+                m_isDirectHoming = true;
+                m_isPartialPath = false;
+                m_hasReachedGoal = false;
+            } else {
+                m_hasReachedGoal = false;
+                m_throttleInput = 0.0f;
+                m_brakeInput = 1.0f;
+                m_steerInput = 0.0f;
+                m_isReversing = false;
+                return;
+            }
         } else {
             m_hasReachedGoal = true;
             m_isAtStandoffVantage = false;
+            m_throttleInput = 0.0f;
+            m_brakeInput = 1.0f;
+            m_steerInput = 0.0f;
+            m_isReversing = false;
+            return;
         }
-        m_throttleInput = 0.0f;
-        m_brakeInput = 1.0f;
-        m_steerInput = 0.0f;
-        m_isReversing = false;
-        return;
     }
 
     // -------------------------------------------------------------
