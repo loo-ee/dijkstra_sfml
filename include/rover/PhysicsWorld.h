@@ -31,7 +31,8 @@ public:
     void createTerrainHeightfield(const float* heightData, int cols, int rows, float spacing);
     JPH::BodyID createChunkHeightField(const float* heightData, int resolution, float spacing, Vector3 worldOffset);
     void removeChunkHeightField(JPH::BodyID bodyId);
-    void spawnBoulder(Vector3 pos, float radius);
+    JPH::BodyID spawnBoulder(Vector3 pos, float radius);
+    bool removeBoulder(JPH::BodyID bodyId);
     void clearBoulders();
 
     // Dynamic Test Spheres

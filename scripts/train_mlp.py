@@ -50,7 +50,7 @@ def parse_arguments():
                         help="Fraction of dataset for validation (default: 0.15)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducibility (default: 42)")
-    parser.add_argument("--output-header", type=str, default="include/TerrainTraversabilityMLP.h",
+    parser.add_argument("--output-header", type=str, default="include/rover/TerrainTraversabilityMLP.h",
                         help="Path to output C++ header file")
     parser.add_argument("--no-export", action="store_true",
                         help="Skip exporting C++ header file")
@@ -357,13 +357,14 @@ def train_model(model: TerrainMLPModel,
         progress = epoch / max(1, epochs - 1)
         current_lr = min_lr + 0.5 * (initial_lr - min_lr) * (1.0 + math.cos(math.pi * progress))
 
-        num_batches = n_train // batch_size
+        actual_batch_size = min(batch_size, n_train)
+        num_batches = max(1, n_train // actual_batch_size)
         train_epoch_loss = 0.0
 
         for b in range(num_batches):
             model.t_step += 1
             t_step = model.t_step
-            batch_idx = indices[b * batch_size : (b + 1) * batch_size]
+            batch_idx = indices[b * actual_batch_size : (b + 1) * actual_batch_size]
 
             # Pre-transpose W2 for fast backprop across layer 2 -> 1
             W2_T = [[W2[j][k] for j in h2_range] for k in h1_range]
@@ -509,7 +510,7 @@ def train_model(model: TerrainMLPModel,
 
         # Validation set evaluation
         val_loss, val_mae, val_acc = evaluate(model, X_val, Y_val, Y_pass_val)
-        avg_train_loss = train_epoch_loss / (num_batches * batch_size)
+        avg_train_loss = train_epoch_loss / max(1, num_batches * actual_batch_size)
         epoch_dur = time.time() - epoch_start_time
 
         if (epoch + 1) % 5 == 0 or epoch == 0 or epoch == epochs - 1:

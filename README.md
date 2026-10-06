@@ -34,23 +34,57 @@ brew install sfml@2
 
 ---
 
-## Build Instructions
+## Repository Layout
 
-### Native Desktop (Raylib)
-
-Compile with the Homebrew Raylib include and library paths:
-
-```bash
-g++ -std=c++17 -Wall \
-    -I"$(brew --prefix raylib)/include" \
-    -L"$(brew --prefix raylib)/lib" \
-    -lraylib -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo \
-    -o build/rover-simulator <sources>
+```
+.
+├── src/
+│   ├── rover/                 # 3D Rover simulation source files
+│   │   ├── rover_main.cpp     # Simulation entry point & orchestrator
+│   │   ├── PlanetaryRover.cpp # Physical rover chassis, suspension & Pure Pursuit
+│   │   ├── DijkstraSolver3D.cpp # Physics-cost-weighted 3D Dijkstra solver
+│   │   ├── RoverNavGraph.cpp  # Topographic navigation graph generation
+│   │   ├── PhysicsWorld.cpp   # Jolt Physics engine integration & rigid bodies
+│   │   ├── TerrainHeightfield.cpp # Procedural heightfield generation & Perlin noise
+│   │   ├── TerrainChunk.cpp   # Procedural infinite terrain chunks & physics
+│   │   ├── ChunkManager.cpp   # Streaming chunk management
+│   │   ├── RoverTelemetryHUD.cpp # 2D Mission Control telemetry HUD overlay
+│   │   └── GraphRenderer3D.cpp # 3D graph, path, and search visualizer
+│   └── visualizer2d/          # 2D Dijkstra visualizer source files (SFML / WebAssembly)
+│       ├── main.cpp
+│       ├── Button.cpp
+│       ├── Graph.cpp
+│       ├── GraphManager.cpp
+│       └── Vertex.cpp
+├── include/
+│   ├── rover/                 # 3D Rover simulation headers
+│   └── visualizer2d/          # 2D Dijkstra visualizer headers
+├── external/                  # Third-party submodules (JoltPhysics)
+├── scripts/                   # Auxiliary scripts (MLP training)
+└── build/                     # Incremental build artifacts & executables
 ```
 
-### Legacy 2D SFML Visualizer
+---
+
+## Build Instructions
+
+### 3D Rover Simulation (Raylib + Jolt Physics)
 
 ```bash
+# Build 3D Rover binary (with fast incremental compilation)
+make rover
+
+# Build and execute 3D simulation
+make run-rover
+```
+
+### 2D SFML Visualizer (Desktop & WebAssembly)
+
+```bash
+# Native desktop binary (SFML)
 make desktop
 make run-desktop
+
+# WebAssembly bundle (Emscripten)
+make wasm
 ```

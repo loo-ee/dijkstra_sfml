@@ -18,27 +18,6 @@
 #include "RoverTelemetryHUD.h"
 #include "SmartCostSelector.h"
 
-// Helper: Render a modern, high-contrast keybinding badge pill with text, returning total width
-static int DrawKeyBind(int x, int y, const char* key, const char* label, bool active = true) {
-    int keyW = MeasureText(key, 11);
-    int padX = 5;
-    int h = 18;
-    Rectangle badgeRect = { (float)x, (float)y, (float)(keyW + padX * 2), (float)h };
-    Color badgeBg = active ? Color{ 26, 36, 52, 255 } : Color{ 18, 22, 30, 180 };
-    Color badgeBorder = active ? Color{ 70, 110, 165, 255 } : Color{ 40, 50, 68, 200 };
-    Color keyColor = active ? Color{ 225, 238, 255, 255 } : Color{ 110, 120, 135, 255 };
-    Color labelColor = active ? Color{ 210, 220, 230, 255 } : Color{ 110, 120, 130, 255 };
-
-    DrawRectangleRounded(badgeRect, 0.35f, 4, badgeBg);
-    DrawRectangleRoundedLines(badgeRect, 0.35f, 4, badgeBorder);
-    DrawText(key, x + padX, y + 4, 11, keyColor);
-
-    int labelX = x + keyW + padX * 2 + 5;
-    DrawText(label, labelX, y + 4, 11, labelColor);
-
-    return (keyW + padX * 2 + 5 + MeasureText(label, 11));
-}
-
 static const TerrainHeightfield* s_activeTerrain = nullptr;
 static float SampleActiveTerrainHeight(float x, float z) {
     return s_activeTerrain ? s_activeTerrain->getHeight(x, z) : 0.0f;
@@ -388,27 +367,7 @@ int main() {
         Vector2 mousePos = GetMousePosition();
         int screenW = GetScreenWidth();
         int screenH = GetScreenHeight();
-
-        bool isOverUI = false;
-        if (showHUD) {
-            Rectangle hudRect = { 16.0f, 16.0f, 440.0f, 326.0f };
-            Rectangle legRect = { 16.0f, 326.0f + 16.0f + 8.0f, 440.0f, 88.0f };
-            int deckH = 92;
-            Rectangle deckRect = { 16.0f, (float)(screenH - deckH - 16), (float)(screenW - 32), (float)deckH };
-            Rectangle telemRect = { (float)(screenW - 340 - 16), 16.0f, 340.0f, 600.0f };
-
-            if (CheckCollisionPointRec(mousePos, hudRect) ||
-                CheckCollisionPointRec(mousePos, legRect) ||
-                CheckCollisionPointRec(mousePos, deckRect) ||
-                CheckCollisionPointRec(mousePos, telemRect)) {
-                isOverUI = true;
-            }
-        } else {
-            Rectangle btnRect = { (float)(screenW - 150 - 16), 16.0f, 150.0f, 32.0f };
-            if (CheckCollisionPointRec(mousePos, btnRect)) {
-                isOverUI = true;
-            }
-        }
+        bool isOverUI = RoverTelemetryHUD::isMouseOverUI(mousePos, screenW, screenH, showHUD);
 
         // 3D Raycast Mouse Picking for Nodes (prevent picking if clicking on UI cards)
         Vertex3D* hoveredNode = nullptr;
@@ -852,297 +811,40 @@ int main() {
             int screenH = GetScreenHeight();
             Vector2 mousePos = GetMousePosition();
 
-            // ----------------------------------------------------
-            // 1. TOP-LEFT: Mission Status & Telemetry HUD Card
-            // ----------------------------------------------------
-            int hudX = 16;
-            int hudY = 16;
-            int hudW = 440;
-            int hudH = 326;
-            Rectangle hudRect = { (float)hudX, (float)hudY, (float)hudW, (float)hudH };
-            DrawRectangleRounded(hudRect, 0.04f, 4, ColorAlpha(Color{ 10, 14, 24, 255 }, 0.92f));
-            DrawRectangleRoundedLines(hudRect, 0.04f, 4, Color{ 48, 68, 98, 255 });
-            DrawRectangle(hudX + 1, hudY + 1, hudW - 2, 3, Color{ 230, 95, 45, 255 }); // Martian Ochre accent
+            bool togglePreset = false;
+            bool toggleInf = false;
+            bool hideHUD = false;
 
-            DrawText("MARTIAN ROVER MISSION TELEMETRY", hudX + 16, hudY + 14, 13, RAYWHITE);
-            DrawText("Phase 5: Autonomous Planetary Rover & Telemetry HUD", hudX + 16, hudY + 32, 11, Color{ 145, 175, 205, 255 });
+            RoverTelemetryHUD::drawMissionCard(
+                screenW, screenH, mousePos,
+                terrain, infiniteWorldMode, chunkMgr.getActiveChunkCount(),
+                physics, blockedEdgeCount, dijkstra, navGraph,
+                activeSmartDecision, isSmartAutoCost, currentPresetIndex,
+                togglePreset, toggleInf, hideHUD
+            );
 
-            // Clickable [H] Hide HUD button
-            Rectangle hideBtnRect = { (float)(hudX + hudW - 85), (float)(hudY + 12), 70.0f, 18.0f };
-            bool hideHovered = CheckCollisionPointRec(mousePos, hideBtnRect);
-            DrawRectangleRounded(hideBtnRect, 0.35f, 4, hideHovered ? Color{ 40, 56, 80, 255 } : Color{ 24, 34, 50, 220 });
-            DrawRectangleRoundedLines(hideBtnRect, 0.35f, 4, hideHovered ? Color{ 100, 160, 240, 255 } : Color{ 60, 85, 120, 200 });
-            DrawText("[H] Hide", hudX + hudW - 77, hudY + 16, 10, Color{ 200, 225, 255, 255 });
-            if (hideHovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                showHUD = false;
-            }
-
-            // Row 1: Interactive Terrain Mode Switcher [M] & Infinite World Toggle [I]
-            Rectangle tmRect = { (float)(hudX + 16), (float)(hudY + 52), (float)(hudW - 160), 22.0f };
-            bool tmHovered = CheckCollisionPointRec(mousePos, tmRect);
-            DrawRectangleRounded(tmRect, 0.25f, 4, tmHovered ? Color{ 36, 52, 78, 255 } : Color{ 20, 28, 44, 255 });
-            DrawRectangleRoundedLines(tmRect, 0.25f, 4, tmHovered ? Color{ 90, 170, 255, 255 } : Color{ 50, 75, 110, 255 });
-            DrawText(TextFormat("TERRAIN [M]: %s", terrain.getPresetName()), hudX + 24, hudY + 57, 11, Color{ 100, 215, 255, 255 });
-
-            Rectangle infRect = { (float)(hudX + hudW - 136), (float)(hudY + 52), 120.0f, 22.0f };
-            bool infHovered = CheckCollisionPointRec(mousePos, infRect);
-            Color infBg = infiniteWorldMode ? Color{ 24, 60, 48, 255 } : Color{ 36, 36, 44, 255 };
-            if (infHovered) infBg = infiniteWorldMode ? Color{ 32, 80, 64, 255 } : Color{ 50, 50, 60, 255 };
-            Color infLine = infiniteWorldMode ? Color{ 46, 204, 113, 255 } : Color{ 120, 130, 150, 255 };
-            DrawRectangleRounded(infRect, 0.25f, 4, infBg);
-            DrawRectangleRoundedLines(infRect, 0.25f, 4, infLine);
-            DrawText(infiniteWorldMode ? TextFormat("[I] INF (%d Chk)", chunkMgr.getActiveChunkCount()) : "[I] BOUNDED", 
-                hudX + hudW - 128, hudY + 57, 10, infiniteWorldMode ? Color{ 60, 230, 175, 255 } : Color{ 170, 180, 195, 255 });
-
-            if (tmHovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            if (hideHUD) showHUD = false;
+            if (togglePreset) {
                 terrain.cyclePreset();
                 ApplyTerrainPreset(terrain.getPreset(), terrain, chunkMgr, infiniteWorldMode, physics, navGraph, dijkstra, rover, blockedEdgeCount);
                 lastNavGraphCenter = rover.getPosition();
             }
-            if (infHovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            if (toggleInf) {
                 infiniteWorldMode = !infiniteWorldMode;
                 ApplyTerrainPreset(terrain.getPreset(), terrain, chunkMgr, infiniteWorldMode, physics, navGraph, dijkstra, rover, blockedEdgeCount);
                 lastNavGraphCenter = rover.getPosition();
             }
 
-            DrawLine(hudX + 16, hudY + 82, hudX + hudW - 16, hudY + 82, Color{ 35, 48, 70, 255 });
-
-            // Row 2: Active Cost Preset & Parameters
-            const auto& w = dijkstra.getWeights();
-            if (isSmartAutoCost) {
-                DrawText(TextFormat("Smart Auto-Cost [0]: %s", activeSmartDecision.strategyName.c_str()), 
-                    hudX + 16, hudY + 90, 11, Color{ 0, 240, 255, 255 });
-                DrawText(TextFormat("Rationale: %s", activeSmartDecision.rationale.c_str()), 
-                    hudX + 16, hudY + 106, 10, Color{ 140, 215, 245, 255 });
-            } else if (dijkstra.isNeuralMode()) {
-                DrawText(TextFormat("Manual Preset [5]: %s (Auto: [0])", w.name.c_str()), 
-                    hudX + 16, hudY + 90, 11, Color{ 60, 230, 175, 255 });
-                DrawText("Engine: 3-Layer PINN MLP (8 -> 32 -> 16 -> 1) | <0.05 us/edge | Zero-Alloc", 
-                    hudX + 16, hudY + 106, 10, Color{ 140, 235, 205, 255 });
-            } else {
-                DrawText(TextFormat("Manual Preset [%d]: %s (Auto: [0])", currentPresetIndex + 1, w.name.c_str()), 
-                    hudX + 16, hudY + 90, 11, Color{ 240, 200, 80, 255 });
-                DrawText(TextFormat("Weights: alpha=%.1f (Work) | beta=%.1f (Slip) | gamma=%.1f | delta=%.1f", 
-                    w.alpha, w.beta, w.gamma, w.delta), hudX + 16, hudY + 106, 10, Color{ 160, 175, 195, 255 });
-            }
-
-            DrawLine(hudX + 16, hudY + 122, hudX + hudW - 16, hudY + 122, Color{ 35, 48, 70, 255 });
-
-            // Row 3: Physics & NavGraph Infrastructure Telemetry
-            const char* gravEnv = "Mars";
-            float gVal = fabsf(physics.getGravity());
-            if (fabsf(gVal - 1.62f) < 0.2f) gravEnv = "Moon";
-            else if (fabsf(gVal - 9.81f) < 0.5f) gravEnv = "Earth";
-
-            DrawText(TextFormat("Jolt Engine: %d Boulders | %d Cut Edges | Gravity: %.2f m/s² (%s) [G]",
-                (int)physics.getBoulders().size(), blockedEdgeCount, physics.getGravity(), gravEnv),
-                hudX + 16, hudY + 130, 11, RAYWHITE);
-
-            // Row 4: Dijkstra Navigation Solution Status
-            size_t stepIdx = dijkstra.getCurrentStepIndex();
-            size_t totalSteps = dijkstra.getTotalSteps();
-            const auto& stats = dijkstra.getPathStats();
-
-            if (dijkstra.isPlaying()) {
-                float pct = (totalSteps > 0) ? (static_cast<float>(stepIdx) / totalSteps * 100.0f) : 0.0f;
-                DrawText(TextFormat("STATUS: [REPLAYING STEP %zu / %zu (%.0f%%)]", stepIdx + 1, totalSteps, pct), 
-                    hudX + 16, hudY + 150, 12, GOLD);
-            } else if (dijkstra.isPathFound()) {
-                if (dijkstra.isPartialPath()) {
-                    DrawText(TextFormat("STATUS: [STANDOFF VANTAGE - %.1fm FROM BLOCKED GOAL]", stats.distanceToGoal), 
-                        hudX + 16, hudY + 150, 12, Color{ 255, 175, 45, 255 });
-                } else {
-                    DrawText(TextFormat("STATUS: [OPTIMAL ROUTE SOLVED in %.2f ms]", stats.computeTimeMs), 
-                        hudX + 16, hudY + 150, 12, Color{ 46, 204, 113, 255 });
-                }
-            } else {
-                DrawText("STATUS: [NO TRAVERSABLE PATH - SLIP / BOULDER BLOCKED]", 
-                    hudX + 16, hudY + 150, 12, Color{ 255, 95, 95, 255 });
-            }
-
-            // Row 5: Route Metrics
-            if (stats.isValid) {
-                if (stats.isPartial) {
-                    DrawText(TextFormat("Safe Standoff: %.1fm  |  Standoff Gap: %.1fm to target", 
-                        stats.totalDistance, stats.distanceToGoal), hudX + 16, hudY + 172, 11, Color{ 255, 215, 100, 255 });
-                } else {
-                    DrawText(TextFormat("3D Distance: %.1f m   |   Physical Energy: %.1f J-equiv", 
-                        stats.totalDistance, stats.totalEnergyCost), hudX + 16, hudY + 172, 11, RAYWHITE);
-                }
-                DrawText(TextFormat("Waypoints: %d nodes    |   Max Route Slope: %.1f°", 
-                    stats.waypointCount, stats.maxSlopeDeg), hudX + 16, hudY + 190, 11, RAYWHITE);
-                DrawText(TextFormat("Elevation Profile: +%.1fm climb  /  -%.1fm descent", 
-                    stats.elevationGain, stats.elevationLoss), hudX + 16, hudY + 208, 11, Color{ 180, 200, 220, 255 });
-            } else {
-                DrawText("Target destination is unreachable with current physical constraints.", 
-                    hudX + 16, hudY + 172, 11, Color{ 255, 140, 140, 255 });
-            }
-
-            DrawLine(hudX + 16, hudY + 226, hudX + hudW - 16, hudY + 226, Color{ 35, 48, 70, 255 });
-
-            // Waypoints & Interactive Picking Telemetry
-            DrawCircle(hudX + 22, hudY + 240, 5, GraphRenderer3D::getNodeColor(NodeState::START));
-            std::string startInfo = navGraph.getStartNode() 
-                ? TextFormat("Start: %s  (y=%.1fm, slope=%.1f°)", 
-                    navGraph.getStartNode()->name.c_str(), 
-                    navGraph.getStartNode()->position.y,
-                    navGraph.getStartNode()->slopeAngleRad * RAD2DEG)
-                : "Start: None [Left Click to set]";
-            DrawText(startInfo.c_str(), hudX + 34, hudY + 235, 11, RAYWHITE);
-
-            DrawCircle(hudX + 22, hudY + 260, 5, GraphRenderer3D::getNodeColor(NodeState::END));
-            std::string endInfo = navGraph.getEndNode() 
-                ? TextFormat("End:   %s  (y=%.1fm, slope=%.1f°)", 
-                    navGraph.getEndNode()->name.c_str(), 
-                    navGraph.getEndNode()->position.y,
-                    navGraph.getEndNode()->slopeAngleRad * RAD2DEG)
-                : "End:   None [Shift + Left Click to set]";
-            DrawText(endInfo.c_str(), hudX + 34, hudY + 255, 11, RAYWHITE);
-
-            // Replay Scrubbing Progress Bar
-            int barW = hudW - 32;
-            int barH = 6;
-            int barX = hudX + 16;
-            int barY = hudY + 284;
-            DrawRectangle(barX, barY, barW, barH, Color{ 25, 35, 52, 255 });
-            float progress = (totalSteps > 1) ? (static_cast<float>(stepIdx) / (totalSteps - 1)) : 1.0f;
-            DrawRectangle(barX, barY, static_cast<int>(barW * progress), barH, Color{ 46, 204, 113, 255 });
-            DrawCircle(barX + static_cast<int>(barW * progress), barY + 3, 5, WHITE);
-            DrawText(TextFormat("Step %zu of %zu  |  FPS: %i", stepIdx + 1, totalSteps, GetFPS()), 
-                hudX + 16, hudY + 298, 10, Color{ 140, 155, 175, 255 });
-
-            // ----------------------------------------------------
-            // 2. BOTTOM-LEFT: NavGraph & Routing Legend Card
-            // ----------------------------------------------------
-            int legW = 440;
-            int legH = 88;
-            int legX = 16;
-            int legY = hudY + hudH + 8;
-            Rectangle legRect = { (float)legX, (float)legY, (float)legW, (float)legH };
-            DrawRectangleRounded(legRect, 0.05f, 4, ColorAlpha(Color{ 10, 14, 24, 255 }, 0.92f));
-            DrawRectangleRoundedLines(legRect, 0.05f, 4, Color{ 48, 68, 98, 255 });
-            DrawRectangle(legX + 1, legY + 1, legW - 2, 2, Color{ 46, 204, 113, 255 });
-
-            DrawText("NAVGRAPH & DIJKSTRA ROUTING LEGEND", legX + 16, legY + 9, 11, RAYWHITE);
-            DrawLine(legX + 16, legY + 24, legX + legW - 16, legY + 24, Color{ 35, 48, 70, 255 });
-
-            // Column 1
-            DrawRectangle(legX + 16, legY + 34, 14, 4, Color{ 46, 204, 113, 255 });
-            DrawText("Shortest Path Conduit", legX + 36, legY + 30, 10, Color{ 180, 255, 200, 255 });
-
-            DrawCircle(legX + 23, legY + 52, 4, GOLD);
-            DrawText("Active Node u (Settling)", legX + 36, legY + 47, 10, GOLD);
-
-            DrawRectangle(legX + 16, legY + 68, 14, 3, Color{ 0, 240, 255, 255 });
-            DrawText("Examining Edge (u -> v)", legX + 36, legY + 63, 10, Color{ 0, 240, 255, 255 });
-
-            // Column 2
-            int legCol2X = legX + 225;
-            DrawCircle(legCol2X + 7, legY + 34, 4, Color{ 52, 152, 219, 255 });
-            DrawText("Settled Node", legCol2X + 20, legY + 30, 10, RAYWHITE);
-
-            DrawRectangle(legCol2X, legY + 50, 14, 3, Color{ 240, 45, 45, 255 });
-            DrawText("Blocked by Boulder Cut", legCol2X + 20, legY + 47, 10, Color{ 255, 120, 120, 255 });
-
-            DrawCircle(legCol2X + 7, legY + 68, 4, GraphRenderer3D::getNodeColor(NodeState::START));
-            DrawText("Start / End Beacons", legCol2X + 20, legY + 63, 10, RAYWHITE);
-
-            // ----------------------------------------------------
-            // 3. TOP-RIGHT: Planetary Rover Flight Telemetry HUD
-            // ----------------------------------------------------
+            RoverTelemetryHUD::drawLegendCard(screenW, screenH);
             RoverTelemetryHUD::draw(rover, screenW, screenH, sceneTime, &activeSmartDecision, isSmartAutoCost);
-
-            // ----------------------------------------------------
-            // 4. BOTTOM COMMAND DECK & KEYBINDINGS BAR
-            // ----------------------------------------------------
-            int deckH = 92;
-            int deckW = screenW - 32;
-            int deckX = 16;
-            int deckY = screenH - deckH - 16;
-            Rectangle deckRect = { (float)deckX, (float)deckY, (float)deckW, (float)deckH };
-            DrawRectangleRounded(deckRect, 0.04f, 4, ColorAlpha(Color{ 10, 14, 24, 255 }, 0.94f));
-            DrawRectangleRoundedLines(deckRect, 0.04f, 4, Color{ 48, 68, 98, 255 });
-            DrawRectangle(deckX + 1, deckY + 1, deckW - 2, 2, Color{ 70, 115, 175, 255 }); // Slate blue accent
-
-            float colW = (deckW - 32.0f) / 4.0f;
-
-            // --- Column 1: Camera Controls ---
-            int c1X = deckX + 16;
-            DrawText("CAMERA CONTROLS", c1X, deckY + 10, 10, Color{ 100, 185, 255, 255 });
-            int x1 = c1X;
-            x1 += DrawKeyBind(x1, deckY + 28, "RMB Drag", "Orbit") + 8;
-            DrawKeyBind(x1, deckY + 28, "Wheel", "Zoom");
-            int x2 = c1X;
-            x2 += DrawKeyBind(x2, deckY + 54, "MMB", "Pan") + 8;
-            x2 += DrawKeyBind(x2, deckY + 54, "F", "Focus") + 8;
-            DrawKeyBind(x2, deckY + 54, "Sh+R", "Reset");
-
-            // --- Column 2: Rover Navigation ---
-            int c2X = deckX + 16 + static_cast<int>(colW);
-            DrawLine(c2X - 12, deckY + 10, c2X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
-            DrawText("ROVER NAVIGATION (WASD)", c2X, deckY + 10, 10, Color{ 46, 204, 113, 255 });
-            int x3 = c2X;
-            x3 += DrawKeyBind(x3, deckY + 28, "Tab", rover.isAutonomous() ? "Manual" : "Auto Drive") + 6;
-            x3 += DrawKeyBind(x3, deckY + 28, "WASD", "Drive") + 6;
-            DrawKeyBind(x3, deckY + 28, "Space", "Brake");
-            int x4 = c2X;
-            x4 += DrawKeyBind(x4, deckY + 54, "T", "Traverse") + 6;
-            x4 += DrawKeyBind(x4, deckY + 54, "R", "Reset") + 6;
-            x4 += DrawKeyBind(x4, deckY + 54, "U/Sh+U", "Right/Fuel") + 6;
-            const char* gKeyName = "Mars G";
-            if (fabsf(physics.getGravity() + 1.62f) < 0.2f) gKeyName = "Moon G";
-            else if (fabsf(physics.getGravity() + 9.81f) < 0.5f) gKeyName = "Earth G";
-            DrawKeyBind(x4, deckY + 54, "G", gKeyName);
-
-            // --- Column 3: Terrain & Dijkstra ---
-            int c3X = deckX + 16 + static_cast<int>(colW * 2);
-            DrawLine(c3X - 12, deckY + 10, c3X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
-            DrawText("TERRAIN & DIJKSTRA", c3X, deckY + 10, 10, Color{ 241, 196, 15, 255 });
-            int x5 = c3X;
-            x5 += DrawKeyBind(x5, deckY + 28, "M", "Preset") + 6;
-            x5 += DrawKeyBind(x5, deckY + 28, "I", infiniteWorldMode ? "Inf" : "Bound", infiniteWorldMode) + 6;
-            DrawKeyBind(x5, deckY + 28, "0", isSmartAutoCost ? "AutoCost" : "Manual", isSmartAutoCost);
-            int x6 = c3X;
-            x6 += DrawKeyBind(x6, deckY + 54, "1-5", "Preset") + 6;
-            x6 += DrawKeyBind(x6, deckY + 54, "P", dijkstra.isPlaying() ? "Pause" : "Play") + 6;
-            DrawKeyBind(x6, deckY + 54, "Enter", "Finish");
-
-            // --- Column 4: View & Simulation Toggles ---
-            int c4X = deckX + 16 + static_cast<int>(colW * 3);
-            DrawLine(c4X - 12, deckY + 10, c4X - 12, deckY + deckH - 10, Color{ 35, 48, 70, 255 });
-            DrawText("VIEW & SIMULATION TOGGLES", c4X, deckY + 10, 10, Color{ 190, 160, 240, 255 });
-            int x7 = c4X;
-            x7 += DrawKeyBind(x7, deckY + 28, "H", "HUD") + 6;
-            x7 += DrawKeyBind(x7, deckY + 28, "V", "Cam") + 6;
-            x7 += DrawKeyBind(x7, deckY + 28, "T", "Terrain", showTerrain) + 6;
-            x7 += DrawKeyBind(x7, deckY + 28, "K", "Wire", showWireframe) + 6;
-            DrawKeyBind(x7, deckY + 28, "E", "Edges", showEdges);
-
-            int x8 = c4X;
-            x8 += DrawKeyBind(x8, deckY + 54, "N", "Nodes", showNodes) + 6;
-            x8 += DrawKeyBind(x8, deckY + 54, "O", "Rocks", showBoulders) + 6;
-            x8 += DrawKeyBind(x8, deckY + 54, "Z", "Spheres", showSpheres) + 6;
-            x8 += DrawKeyBind(x8, deckY + 54, "B/X", "Drop") + 6;
-            DrawKeyBind(x8, deckY + 54, "C", "Clear");
+            RoverTelemetryHUD::drawCommandDeck(
+                screenW, screenH, rover, physics, infiniteWorldMode, isSmartAutoCost,
+                showTerrain, showWireframe, showEdges, showNodes, showBoulders, showSpheres, showHUD
+            );
         } else {
-            // Interactive floating button when HUD is hidden
-            int btnW = 150;
-            int btnH = 32;
-            int btnX = GetScreenWidth() - btnW - 16;
-            int btnY = 16;
-            Rectangle btnRect = { (float)btnX, (float)btnY, (float)btnW, (float)btnH };
-            Vector2 mPos = GetMousePosition();
-            bool isHovered = CheckCollisionPointRec(mPos, btnRect);
-
-            Color bg = isHovered ? Color{ 36, 52, 78, 240 } : Color{ 16, 22, 34, 210 };
-            Color border = isHovered ? Color{ 80, 160, 255, 255 } : Color{ 48, 70, 105, 220 };
-            DrawRectangleRounded(btnRect, 0.35f, 4, bg);
-            DrawRectangleRoundedLines(btnRect, 0.35f, 4, border);
-
-            DrawCircle(btnX + 16, btnY + 16, 4, Color{ 46, 204, 113, 255 });
-            DrawText("[H] SHOW HUD", btnX + 28, btnY + 10, 11, RAYWHITE);
-
-            if (isHovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            bool requestShowHUD = false;
+            RoverTelemetryHUD::drawShowHUDButton(screenW, screenH, mousePos, requestShowHUD);
+            if (requestShowHUD) {
                 showHUD = true;
             }
         }

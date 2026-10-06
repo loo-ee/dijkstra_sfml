@@ -283,8 +283,8 @@ void PhysicsWorld::clearBoulders() {
     m_boulders.clear();
 }
 
-void PhysicsWorld::spawnBoulder(Vector3 pos, float radius) {
-    if (!m_initialized) return;
+JPH::BodyID PhysicsWorld::spawnBoulder(Vector3 pos, float radius) {
+    if (!m_initialized) return JPH::BodyID();
 
     JPH::ShapeRefC sphereShape = new JPH::SphereShape(radius);
     JPH::BodyCreationSettings settings(
@@ -302,6 +302,24 @@ void PhysicsWorld::spawnBoulder(Vector3 pos, float radius) {
 
     Color color = Color{ 85, 65, 55, 255 };
     m_boulders.push_back({ pos, radius, color, id });
+    return id;
+}
+
+bool PhysicsWorld::removeBoulder(JPH::BodyID bodyId) {
+    if (!m_initialized || bodyId.IsInvalid()) return false;
+
+    JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+    bodyInterface.RemoveBody(bodyId);
+    bodyInterface.DestroyBody(bodyId);
+
+    auto it = std::remove_if(m_boulders.begin(), m_boulders.end(), [bodyId](const BoulderInfo& b) {
+        return b.bodyId == bodyId;
+    });
+    if (it != m_boulders.end()) {
+        m_boulders.erase(it, m_boulders.end());
+        return true;
+    }
+    return false;
 }
 
 JPH::BodyID PhysicsWorld::spawnDynamicSphere(Vector3 pos, float radius, float mass) {

@@ -1,4 +1,4 @@
-#include "include/Button.h"
+#include "Button.h"
 
 Button::Button(const sf::Vector2f& position, const sf::Vector2f& size) {
     m_buttonShape.setSize(size);

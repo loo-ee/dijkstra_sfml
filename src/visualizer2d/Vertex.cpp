@@ -1,4 +1,4 @@
-#include "include/Vertex.h"
+#include "Vertex.h"
 
 Vertex::Vertex(std::string vertexName, std::vector<std::pair<std::string, int>> neighbors)
     : vertexName(vertexName), neighbors(neighbors), minDistanceFromSrc(INF), parent(nullptr), state(NodeState::DEFAULT) {

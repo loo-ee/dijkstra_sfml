@@ -137,7 +137,10 @@ void TerrainChunk::generate(const TerrainHeightfield& generator, PhysicsWorld& p
         // Only spawn boulders on reasonably flat or rolling ground (< 20 deg)
         if (slope < 20.0f * DEG2RAD) {
             Vector3 bPos = { bx, by + radius * 0.70f, bz };
-            physics.spawnBoulder(bPos, radius);
+            JPH::BodyID bId = physics.spawnBoulder(bPos, radius);
+            if (!bId.IsInvalid()) {
+                m_boulderBodyIds.push_back(bId);
+            }
         }
     }
 
@@ -151,6 +154,11 @@ void TerrainChunk::unload(PhysicsWorld& physics) {
         physics.removeChunkHeightField(m_physicsBodyId);
         m_physicsBodyId = JPH::BodyID();
     }
+
+    for (const auto& bId : m_boulderBodyIds) {
+        physics.removeBoulder(bId);
+    }
+    m_boulderBodyIds.clear();
 
     UnloadModel(m_model);
     m_isLoaded = false;

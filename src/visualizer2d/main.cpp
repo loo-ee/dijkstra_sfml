@@ -1,5 +1,5 @@
 #ifdef __EMSCRIPTEN__
-#include "include/sfml_web_shim.hpp"
+#include "sfml_web_shim.hpp"
 #else
 #include <SFML/Graphics.hpp>
 #endif
@@ -16,9 +16,9 @@
 #include <emscripten.h>
 #endif
 
-#include "include/GraphManager.h"
-#include "include/Graph.h"
-#include "include/Button.h"
+#include "GraphManager.h"
+#include "Graph.h"
+#include "Button.h"
 
 enum class InteractionMode {
     MOVE,

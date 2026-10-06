@@ -1,33 +1,51 @@
-# Dijkstra SFML Visualizer Makefile (Native Desktop + WebAssembly WebGL)
+# Dijkstra SFML Visualizer & 3D Planetary Rover Makefile (Native Desktop + WebAssembly WebGL)
 
 CXX = g++
 EMCC = emcc
-
-# Project Source Files
-SRCS = main.cpp Button.cpp Graph.cpp GraphManager.cpp Vertex.cpp
 
 # Directories
 BUILD_DIR = build
 WASM_BUILD_DIR = $(BUILD_DIR)/wasm
 TARGET_PORTFOLIO_DIR = /Users/louie/Documents/GitHub/portfolio/frontend/public/wasm/sfml
 
-# Native Desktop Flags (SFML Legacy)
-SFML_PREFIX ?= $(shell brew --prefix sfml@2 2>/dev/null || echo "/opt/homebrew")
-NATIVE_CXXFLAGS = -std=c++17 -Wno-deprecated-declarations -I"$(SFML_PREFIX)/include"
-NATIVE_LDFLAGS = -L"$(SFML_PREFIX)/lib" -lsfml-graphics -lsfml-window -lsfml-system -lsfml-audio
+# 2D SFML Visualizer Sources & Target
+SRCS = src/visualizer2d/main.cpp \
+       src/visualizer2d/Button.cpp \
+       src/visualizer2d/Graph.cpp \
+       src/visualizer2d/GraphManager.cpp \
+       src/visualizer2d/Vertex.cpp
+DESKTOP_OBJS = $(patsubst src/visualizer2d/%.cpp,$(BUILD_DIR)/visualizer2d/%.o,$(SRCS))
 DESKTOP_TARGET = $(BUILD_DIR)/dijkstra-visualizer
 
-# Native 3D Simulation Flags (Raylib 6.0+ & Jolt Physics)
+# Native Desktop Flags (SFML Legacy)
+SFML_PREFIX ?= $(shell brew --prefix sfml@2 2>/dev/null || echo "/opt/homebrew")
+NATIVE_CXXFLAGS = -std=c++17 -Wno-deprecated-declarations -Iinclude -Iinclude/visualizer2d -I"$(SFML_PREFIX)/include"
+NATIVE_LDFLAGS = -L"$(SFML_PREFIX)/lib" -lsfml-graphics -lsfml-window -lsfml-system -lsfml-audio
+
+# 3D Rover Simulation Sources & Target (Raylib 6.0+ & Jolt Physics)
+ROVER_SRCS = src/rover/rover_main.cpp \
+             src/rover/GraphRenderer3D.cpp \
+             src/rover/TerrainHeightfield.cpp \
+             src/rover/TerrainChunk.cpp \
+             src/rover/ChunkManager.cpp \
+             src/rover/RoverNavGraph.cpp \
+             src/rover/PhysicsWorld.cpp \
+             src/rover/DijkstraSolver3D.cpp \
+             src/rover/PlanetaryRover.cpp \
+             src/rover/RoverTelemetryHUD.cpp
+ROVER_OBJS = $(patsubst src/rover/%.cpp,$(BUILD_DIR)/rover/%.o,$(ROVER_SRCS))
+ROVER_TARGET = $(BUILD_DIR)/rover-simulator
+
 RAYLIB_PREFIX ?= $(shell brew --prefix raylib 2>/dev/null || echo "/opt/homebrew")
-RAYLIB_CXXFLAGS = -std=c++17 -Wall -DNDEBUG -DJPH_DEBUG_RENDERER -DJPH_OBJECT_STREAM -DJPH_PROFILE_ENABLED -DJPH_USE_CPU_COMPUTE -DJPH_USE_MTL -Iinclude -Iexternal/JoltPhysics -I"$(RAYLIB_PREFIX)/include"
+RAYLIB_CXXFLAGS = -std=c++17 -Wall -DNDEBUG -DJPH_DEBUG_RENDERER -DJPH_OBJECT_STREAM -DJPH_PROFILE_ENABLED -DJPH_USE_CPU_COMPUTE -DJPH_USE_MTL \
+                  -Iinclude -Iinclude/rover -Iexternal/JoltPhysics -I"$(RAYLIB_PREFIX)/include"
 RAYLIB_LDFLAGS  = -Lexternal/JoltPhysics/Build -lJolt \
                   -L"$(RAYLIB_PREFIX)/lib" -lraylib \
                   -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
-ROVER_SRCS = rover_main.cpp GraphRenderer3D.cpp TerrainHeightfield.cpp TerrainChunk.cpp ChunkManager.cpp RoverNavGraph.cpp PhysicsWorld.cpp DijkstraSolver3D.cpp PlanetaryRover.cpp RoverTelemetryHUD.cpp
-ROVER_TARGET = $(BUILD_DIR)/rover-simulator
 
 # Emscripten WebAssembly Flags (SDL2 + SDL2_ttf WebGL backend)
-EMCC_FLAGS = -s WASM=1 \
+EMCC_FLAGS = -std=c++17 -Iinclude -Iinclude/visualizer2d \
+             -s WASM=1 \
              -s USE_SDL=2 \
              -s USE_SDL_TTF=2 \
              -s INITIAL_MEMORY=67108864 \
@@ -38,6 +56,16 @@ WASM_TARGET = $(WASM_BUILD_DIR)/index.html
 .PHONY: all wasm desktop run-desktop rover run-rover train-mlp deploy clean check-raylib help
 
 all: wasm
+
+# Pattern rule for 3D Rover object files
+$(BUILD_DIR)/rover/%.o: src/rover/%.cpp
+	@mkdir -p $(BUILD_DIR)/rover
+	$(CXX) $(RAYLIB_CXXFLAGS) -c $< -o $@
+
+# Pattern rule for 2D Visualizer object files
+$(BUILD_DIR)/visualizer2d/%.o: src/visualizer2d/%.cpp
+	@mkdir -p $(BUILD_DIR)/visualizer2d
+	$(CXX) $(NATIVE_CXXFLAGS) -c $< -o $@
 
 # Build WebAssembly WebGL Bundle
 wasm: $(SRCS)
@@ -52,9 +80,9 @@ deploy: wasm
 	@echo "Deployed WASM build to $(TARGET_PORTFOLIO_DIR)"
 
 # Build Native Desktop Executable (SFML Legacy)
-desktop: $(SRCS)
+desktop: $(DESKTOP_OBJS)
 	@mkdir -p $(BUILD_DIR)
-	$(CXX) $(NATIVE_CXXFLAGS) $(SRCS) -o $(DESKTOP_TARGET) $(NATIVE_LDFLAGS)
+	$(CXX) $(DESKTOP_OBJS) -o $(DESKTOP_TARGET) $(NATIVE_LDFLAGS)
 	@echo "Desktop build complete: $(DESKTOP_TARGET)"
 
 # Run Native Desktop Executable (SFML Legacy)
@@ -67,9 +95,9 @@ external/JoltPhysics/Build/libJolt.a:
 	cmake --build external/JoltPhysics/Build -j 4
 
 # Build Native 3D Simulation (Raylib + Jolt)
-rover: external/JoltPhysics/Build/libJolt.a $(ROVER_SRCS)
+rover: external/JoltPhysics/Build/libJolt.a $(ROVER_OBJS)
 	@mkdir -p $(BUILD_DIR)
-	$(CXX) $(RAYLIB_CXXFLAGS) $(ROVER_SRCS) -o $(ROVER_TARGET) $(RAYLIB_LDFLAGS)
+	$(CXX) $(ROVER_OBJS) -o $(ROVER_TARGET) $(RAYLIB_LDFLAGS)
 	@echo "Rover 3D simulation build complete: $(ROVER_TARGET)"
 
 # Run Native 3D Simulation (Raylib)
@@ -78,7 +106,7 @@ run-rover: rover
 
 # Retrain Neural Network Traversability MLP
 train-mlp:
-	@/usr/bin/python3 scripts/train_mlp.py
+	@/usr/bin/python3 scripts/train_mlp.py --output-header include/rover/TerrainTraversabilityMLP.h
 
 # Clean Build Artifacts
 clean:
