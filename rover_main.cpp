@@ -207,8 +207,8 @@ int main() {
     PhysicsWorld physics;
     physics.init();
 
-    // 4. Procedural Martian Terrain Heightfield
-    TerrainHeightfield terrain(128, 200.0f);
+    // 4. Procedural Martian Terrain Heightfield (Full 1,440m planetary globe physics coverage)
+    TerrainHeightfield terrain(256, 1440.0f);
 
     // 5. Infinite Procedural Chunk Manager
     ChunkManager chunkMgr;
@@ -460,8 +460,8 @@ int main() {
             float manualBrake = 0.0f;
             if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) manualThrottle += 1.0f;
             if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) manualThrottle -= 0.6f;
-            if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) manualSteer -= 0.60f;
-            if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) manualSteer += 0.60f;
+            if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) manualSteer += 0.60f;
+            if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) manualSteer -= 0.60f;
             if (IsKeyDown(KEY_SPACE)) manualBrake = 1.0f;
 
             rover.setThrottleInput(manualThrottle);
