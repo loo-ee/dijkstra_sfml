@@ -70,8 +70,8 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
         return std::numeric_limits<float>::infinity();
     }
 
-    // Hard traversability threshold: slopes >= 20 deg are impassable for rovers to ensure safe climbing without stall
-    constexpr float MAX_TRAVERSABLE_SLOPE = 20.0f * DEG2RAD;
+    // Hard traversability threshold: slopes >= 15.5 deg are impassable for rovers to ensure safe climbing without stall
+    constexpr float MAX_TRAVERSABLE_SLOPE = 15.5f * DEG2RAD;
     if (u->slopeAngleRad >= MAX_TRAVERSABLE_SLOPE || v->slopeAngleRad >= MAX_TRAVERSABLE_SLOPE) {
         return std::numeric_limits<float>::infinity();
     }
@@ -105,14 +105,14 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
         sideSlopeRad = localSlope * sinSide;
         float sideSlopeDeg = sideSlopeRad * RAD2DEG;
 
-        // Above 18 degrees cross-slope: critical lateral rollover hazard -> strictly impassable
-        if (sideSlopeDeg > 18.0f) {
+        // Above 14 degrees cross-slope: critical lateral rollover hazard -> strictly impassable
+        if (sideSlopeDeg > 14.0f) {
             return std::numeric_limits<float>::infinity();
         }
-        // Above 6 degrees cross-slope: progressive penalty to funnel paths to flat terrain / valleys
-        if (sideSlopeDeg > 6.0f) {
-            float excess = (sideSlopeDeg - 6.0f) / 12.0f;
-            sideSlopePenalty = 6.0f * (excess * excess);
+        // Above 5 degrees cross-slope: progressive penalty to funnel paths to flat terrain / valleys
+        if (sideSlopeDeg > 5.0f) {
+            float excess = (sideSlopeDeg - 5.0f) / 9.0f;
+            sideSlopePenalty = 8.0f * (excess * excess);
         }
     }
 
@@ -168,17 +168,20 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
         return d * mlResult.costMultiplier;
     }
 
-    // 5. Elevation Delta & Gravity / Braking Work (Strong physical penalty for steep uphill)
+    // 5. Elevation Delta & Gravity / Leveled Terrain Routing Priority
+    // Heavily favors low-grade contours, valleys, and saddle points over ascending high terrain
     float gravityFactor = 0.0f;
-    if (dy >= 0.0f) {
-        // Non-linear uphill steepness penalty: smooth at low grade, strongly discourages steep climbs
+    if (dy > 0.02f) {
         float slopeRatio = segmentSlopeRad / MAX_TRAVERSABLE_SLOPE;
-        float steepnessPenalty = 6.0f * (slopeRatio * slopeRatio);
-        gravityFactor = m_weights.alpha * (dy / d) + steepnessPenalty;
-    } else {
-        // Steep descent requires braking work and introduces slide hazard (no negative discount)
-        if (segmentSlopeRad > 6.0f * DEG2RAD) {
-            gravityFactor = 2.0f * (fabsf(dy) / d);
+        // Cubic progression: gentle slopes (0-4 deg) are nearly free, steep climbs (8-15 deg) incur heavy cost
+        float steepnessPenalty = 14.0f * (slopeRatio * slopeRatio * slopeRatio);
+        float elevDeltaCost = m_weights.alpha * (dy / d) * (1.0f + fabsf(dy) * 0.4f);
+        gravityFactor = elevDeltaCost + steepnessPenalty;
+    } else if (dy < -0.02f) {
+        // Controlled descent penalty
+        if (segmentSlopeRad > 5.0f * DEG2RAD) {
+            float descRatio = segmentSlopeRad / MAX_TRAVERSABLE_SLOPE;
+            gravityFactor = 3.0f * (descRatio * descRatio);
         }
     }
 

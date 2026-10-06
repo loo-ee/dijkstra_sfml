@@ -88,8 +88,8 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
             node->slopeAngleRad = acosf(dotUp);
             node->surfaceFriction = 0.70f;
 
-            // Realistic planetary rover mobility limit: slopes >= 20 deg are impassable to guarantee climbing safety
-            node->isWalkable = (node->slopeAngleRad < 20.0f * DEG2RAD);
+            // Realistic planetary rover mobility limit: slopes >= 15.5 deg are impassable to guarantee climbing safety and avoid getting stuck on high terrain
+            node->isWalkable = (node->slopeAngleRad < 15.5f * DEG2RAD);
 
             if (!node->isWalkable) {
                 node->state = NodeState::IMPASSABLE;
@@ -126,7 +126,7 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
             auto it = m_spatialNodes.find(nKey);
             if (it != m_spatialNodes.end()) {
                 Vertex3D* v = it->second;
-                if (!v->isWalkable || v->slopeAngleRad > 15.0f * DEG2RAD) {
+                if (!v->isWalkable || v->slopeAngleRad > 13.0f * DEG2RAD) {
                     nextToCliff = true;
                 }
                 if (v->slopeAngleRad > maxAdjSlope) {
@@ -146,7 +146,7 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
                 v->neighbors.emplace_back(u->name, dist);
 
                 // Add unique undirected edge to rendering list
-                bool steep = (!u->isWalkable || !v->isWalkable || segSlopeRad >= 20.0f * DEG2RAD);
+                bool steep = (!u->isWalkable || !v->isWalkable || segSlopeRad >= 15.5f * DEG2RAD);
                 Color edgeColor = steep ? Color{ 180, 40, 40, 75 } : Color{ 60, 205, 255, 175 };
                 m_edges.push_back({ u->position, v->position, edgeColor, steep, u->name, v->name });
                 if (steep) {

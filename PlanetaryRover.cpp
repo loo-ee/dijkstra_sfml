@@ -280,6 +280,22 @@ void PlanetaryRover::update(PhysicsWorld& physics, float dt) {
 
     // 4. Raycast suspension, tire dynamics, TCS, and drive forces
     updateSuspensionAndTires(physics, dt);
+
+    // 5. Anti-Subsurface Floor Clamp: Guarantee chassis never sinks or clips beneath physical terrain
+    Vector3 gNormal = Vector3{ 0, 1, 0 };
+    Vector3 gHit = m_position;
+    Vector3 rStart = Vector3{ m_position.x, m_position.y + 6.0f, m_position.z };
+    Vector3 rEnd   = Vector3{ m_position.x, m_position.y - 6.0f, m_position.z };
+    if (physics.raycast(rStart, rEnd, &gHit, &gNormal, m_chassisBodyId)) {
+        float minSafeY = gHit.y + m_halfExtents.y + 0.12f;
+        if (m_position.y < minSafeY) {
+            m_position.y = minSafeY;
+            physics.setBodyTransform(m_chassisBodyId, m_position, m_rotation);
+            Vector3 vel = m_linearVelocity;
+            if (vel.y < 0.0f) vel.y = 0.0f;
+            physics.setBodyLinearVelocity(m_chassisBodyId, vel);
+        }
+    }
 }
 
 void PlanetaryRover::triggerReplan(const std::string& reason, Vector3 hazardPos) {

@@ -616,16 +616,16 @@ int main() {
 
             // B. Draw Procedural Martian Planetary Globe Mesh (1,440m circular sphere)
             if (showTerrain && terrain.isLoaded()) {
-                rlDisableBackfaceCulling();
-                DrawModel(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, WHITE);
-                rlEnableBackfaceCulling();
-
-                if (showWireframe) {
-                    DrawModelWires(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, ColorAlpha(BLACK, 0.2f));
-                }
-
                 if (infiniteWorldMode) {
                     chunkMgr.draw(showWireframe);
+                } else {
+                    rlDisableBackfaceCulling();
+                    DrawModel(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, WHITE);
+                    rlEnableBackfaceCulling();
+
+                    if (showWireframe) {
+                        DrawModelWires(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, ColorAlpha(BLACK, 0.2f));
+                    }
                 }
 
                 // Curved Atmospheric Horizon Glow Ring (Spherical Horizon Silhouette)

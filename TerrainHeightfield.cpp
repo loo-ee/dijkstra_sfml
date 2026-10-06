@@ -458,32 +458,7 @@ void TerrainHeightfield::generateSurfaceTexture() {
 }
 
 float TerrainHeightfield::getHeight(float x, float z) const {
-    const float halfSize = m_size * 0.5f;
-    float gx = (x + halfSize) / m_spacing;
-    float gz = (z + halfSize) / m_spacing;
-
-    if (gx < 0.0f || gx >= m_resolution - 1 || gz < 0.0f || gz >= m_resolution - 1) {
-        return evaluateRawHeight(x, z);
-    }
-
-    int x0 = static_cast<int>(floorf(gx));
-    int z0 = static_cast<int>(floorf(gz));
-    int x1 = std::min(x0 + 1, m_resolution - 1);
-    int z1 = std::min(z0 + 1, m_resolution - 1);
-
-    float fx = gx - x0;
-    float fz = gz - z0;
-
-    // Bilinear interpolation across grid quad
-    float h00 = m_heightData[z0 * m_resolution + x0];
-    float h10 = m_heightData[z0 * m_resolution + x1];
-    float h01 = m_heightData[z1 * m_resolution + x0];
-    float h11 = m_heightData[z1 * m_resolution + x1];
-
-    float h0 = Lerp(h00, h10, fx);
-    float h1 = Lerp(h01, h11, fx);
-
-    return Lerp(h0, h1, fz);
+    return evaluateRawHeight(x, z);
 }
 
 Vector3 TerrainHeightfield::getNormal(float x, float z) const {
