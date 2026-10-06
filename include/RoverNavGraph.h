@@ -31,6 +31,7 @@ public:
     void generateTerrainGrid(const TerrainHeightfield& terrain, int gridCols, int gridRows, float spacing);
     void generateCenteredGrid(const TerrainHeightfield& terrain, Vector3 centerPos, int gridCols, int gridRows, float spacing);
     void generatePersistentPlanetaryGrid(const TerrainHeightfield& terrain, Vector3 centerPos, float radius = 96.0f, float spacing = 12.0f);
+    void ensureCorridor(const TerrainHeightfield& terrain, Vector3 startPos, Vector3 endPos, float spacing = 12.0f);
     void validateEdgesWithPhysics(PhysicsWorld& physics, float clearanceOffset = 0.6f);
     
     Vertex3D* getClosestNode(Vector3 worldPos);

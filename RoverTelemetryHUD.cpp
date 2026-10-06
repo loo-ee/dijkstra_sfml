@@ -38,33 +38,43 @@ void RoverTelemetryHUD::draw(const PlanetaryRover& rover, int screenW, int scree
 
     // Autonomy Status Indicator Pill
     Color badgeBg, badgeBorder, badgeText;
-    const char* statusText = "";
-    if (rover.hasReachedGoal()) {
+    std::string statusStr;
+    if (rover.isAtStandoffVantage()) {
+        badgeBg = Color{ 58, 38, 12, 255 };
+        badgeBorder = Color{ 255, 175, 45, 255 };
+        badgeText = Color{ 255, 195, 65, 255 };
+        statusStr = TextFormat("STANDOFF HELD: %.1fm TO GOAL [T: Infiltrate]", rover.getStandoffDistance());
+    } else if (rover.isDirectHoming()) {
+        badgeBg = Color{ 64, 22, 12, 255 };
+        badgeBorder = Color{ 255, 100, 35, 255 };
+        badgeText = Color{ 255, 125, 45, 255 };
+        statusStr = "STATUS: OFF-ROAD DIRECT HOMING [Bumper Avoid]";
+    } else if (rover.hasReachedGoal()) {
         badgeBg = Color{ 16, 48, 52, 255 };
         badgeBorder = Color{ 0, 220, 240, 255 };
         badgeText = Color{ 0, 240, 255, 255 };
-        statusText = "STATUS: MISSION OBJECTIVE REACHED";
+        statusStr = "STATUS: MISSION OBJECTIVE REACHED";
     } else if (rover.isReversing()) {
         badgeBg = Color{ 54, 28, 12, 255 };
         badgeBorder = Color{ 245, 130, 32, 255 };
         badgeText = Color{ 255, 160, 50, 255 };
-        statusText = "STATUS: REVERSE GEAR (OBSTACLE/SLOPE RECOVERY)";
+        statusStr = "STATUS: REVERSE GEAR (OBSTACLE/SLOPE RECOVERY)";
     } else if (rover.isAutonomous()) {
         badgeBg = Color{ 16, 48, 32, 255 };
         badgeBorder = Color{ 46, 204, 113, 255 };
         badgeText = Color{ 46, 204, 113, 255 };
-        statusText = "STATUS: AUTONOMOUS PURE PURSUIT [Tab/F]";
+        statusStr = "STATUS: AUTONOMOUS PURE PURSUIT [Tab/F]";
     } else {
         badgeBg = Color{ 48, 38, 16, 255 };
         badgeBorder = Color{ 241, 196, 15, 255 };
         badgeText = Color{ 241, 196, 15, 255 };
-        statusText = "STATUS: MANUAL [WASD] (Auto: Tab/F)";
+        statusStr = "STATUS: MANUAL [WASD] (Auto: Tab/F)";
     }
 
     Rectangle statusRect = { (float)(cardX + 16), (float)(cardY + 32), (float)(cardW - 32), 20.0f };
     DrawRectangleRounded(statusRect, 0.25f, 4, badgeBg);
     DrawRectangleRoundedLines(statusRect, 0.25f, 4, badgeBorder);
-    DrawText(statusText, cardX + 24, cardY + 37, 10, badgeText);
+    DrawText(statusStr.c_str(), cardX + 24, cardY + 37, 10, badgeText);
 
     DrawLine(cardX + 16, cardY + 58, cardX + cardW - 16, cardY + 58, Color{ 35, 48, 70, 255 });
 

@@ -465,8 +465,24 @@ void RoverNavGraph::setStartNode(Vertex3D* node) {
     m_startNode->state = NodeState::START;
 }
 
+void RoverNavGraph::ensureCorridor(const TerrainHeightfield& terrain, Vector3 startPos, Vector3 endPos, float spacing) {
+    float totalDist = Vector3Distance(startPos, endPos);
+    int steps = static_cast<int>(ceilf(totalDist / 48.0f));
+    for (int i = 0; i <= steps; ++i) {
+        float t = (steps > 0) ? (static_cast<float>(i) / steps) : 0.0f;
+        Vector3 p = Vector3Lerp(startPos, endPos, t);
+        generatePersistentPlanetaryGrid(terrain, p, 72.0f, spacing);
+    }
+}
+
 void RoverNavGraph::setEndNode(Vertex3D* node) {
     if (!node) return;
+
+    // If selected end node is impassable (hazard/boulder/cliff), snap to nearest walkable node
+    if (!node->isWalkable) {
+        Vertex3D* walkable = getClosestWalkableNode(node->position);
+        if (walkable) node = walkable;
+    }
 
     if (m_endNode && m_endNode != m_startNode) {
         m_endNode->state = m_endNode->isWalkable ? NodeState::DEFAULT : NodeState::IMPASSABLE;

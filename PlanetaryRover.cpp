@@ -48,6 +48,10 @@ PlanetaryRover::PlanetaryRover()
     , m_crossTrackError(0.0f)
     , m_isAutonomous(false)
     , m_hasReachedGoal(false)
+    , m_isPartialPath(false)
+    , m_standoffDist(0.0f)
+    , m_isAtStandoffVantage(false)
+    , m_isDirectHoming(false)
     , m_cameraMode(RoverCameraMode::ORBIT)
     , m_chaseCamPos{ 0, 10, -10 }
     , m_chaseCamTarget{ 0, 0, 0 }
@@ -130,6 +134,10 @@ void PlanetaryRover::reset(PhysicsWorld& physics, Vector3 spawnPos, float yawAng
     m_hazardPos     = Vector3{ 0, 0, 0 };
     m_replanCooldown = 0.0f;
     m_hasReachedGoal = false;
+    m_isPartialPath = false;
+    m_standoffDist = 0.0f;
+    m_isAtStandoffVantage = false;
+    m_isDirectHoming = false;
     m_currentWaypointIndex = 0;
 
     for (int i = 0; i < 4; ++i) {
@@ -148,7 +156,7 @@ void PlanetaryRover::reset(PhysicsWorld& physics, Vector3 spawnPos, float yawAng
     m_chaseCamTarget = m_position;
 }
 
-void PlanetaryRover::setPath(const std::vector<const Vertex3D*>& pathNodes) {
+void PlanetaryRover::setPath(const std::vector<const Vertex3D*>& pathNodes, bool isPartial, float standoffDist) {
     m_waypoints.clear();
     m_waypoints.reserve(pathNodes.size());
     for (const Vertex3D* node : pathNodes) {
@@ -156,11 +164,28 @@ void PlanetaryRover::setPath(const std::vector<const Vertex3D*>& pathNodes) {
             m_waypoints.push_back(node->position);
         }
     }
+    m_isPartialPath = isPartial;
+    m_standoffDist = standoffDist;
+    m_isAtStandoffVantage = false;
+    m_isDirectHoming = false;
     m_currentWaypointIndex = 0;
     m_hasReachedGoal = false;
     if (!m_waypoints.empty()) {
         m_targetWaypoint = m_waypoints.front();
     }
+}
+
+void PlanetaryRover::engageDirectHoming(Vector3 targetPos) {
+    m_waypoints.clear();
+    m_waypoints.push_back(targetPos);
+    m_currentWaypointIndex = 0;
+    m_targetWaypoint = targetPos;
+    m_isPartialPath = false;
+    m_standoffDist = 0.0f;
+    m_isAtStandoffVantage = false;
+    m_isDirectHoming = true;
+    m_hasReachedGoal = false;
+    m_isAutonomous = true;
 }
 
 void PlanetaryRover::cycleCameraMode() {
@@ -275,7 +300,13 @@ void PlanetaryRover::updatePurePursuit(PhysicsWorld& physics, float dt) {
     float distToGoal = Vector2Distance(Vector2{ m_position.x, m_position.z }, Vector2{ goalPos.x, goalPos.z });
 
     if (distToGoal < 1.6f) {
-        m_hasReachedGoal = true;
+        if (m_isPartialPath && !m_isDirectHoming) {
+            m_isAtStandoffVantage = true;
+            m_hasReachedGoal = false;
+        } else {
+            m_hasReachedGoal = true;
+            m_isAtStandoffVantage = false;
+        }
         m_throttleInput = 0.0f;
         m_brakeInput = 1.0f;
         m_steerInput = 0.0f;

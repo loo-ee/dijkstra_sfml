@@ -299,7 +299,7 @@ int main() {
                                           navGraph.getVertices(), navGraph.getBlockedEdgesMap());
                 const auto& newPath = dijkstra.getShortestPathNodes();
                 if (!newPath.empty()) {
-                    rover.setPath(newPath);
+                    rover.setPath(newPath, dijkstra.isPartialPath(), dijkstra.getDistanceToGoal());
                 }
             }
             rover.clearReplanRequest();
@@ -347,9 +347,12 @@ int main() {
                     } else {
                         navGraph.setStartNode(hoveredNode);
                     }
+                    if (navGraph.getStartNode() && navGraph.getEndNode()) {
+                        navGraph.ensureCorridor(terrain, navGraph.getStartNode()->position, navGraph.getEndNode()->position, navGraph.getSpacing());
+                    }
                     dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
                                               navGraph.getVertices(), navGraph.getBlockedEdgesMap());
-                    rover.setPath(dijkstra.getShortestPathNodes());
+                    rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal());
                 }
             }
         }
@@ -378,46 +381,52 @@ int main() {
         // Update Dijkstra Step-by-Step Playback
         dijkstra.update(dt);
 
-        // Cost Preset Selection Keys: 1, 2, 3, 4
+        // Cost Preset Selection Keys: 1, 2, 3, 4, 5
         if (IsKeyPressed(KEY_ONE)) {
             currentPresetIndex = 0;
             dijkstra.applyPreset(0);
             dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
                                       navGraph.getVertices(), navGraph.getBlockedEdgesMap());
-            rover.setPath(dijkstra.getShortestPathNodes());
+            rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal());
         }
         if (IsKeyPressed(KEY_TWO)) {
             currentPresetIndex = 1;
             dijkstra.applyPreset(1);
             dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
                                       navGraph.getVertices(), navGraph.getBlockedEdgesMap());
-            rover.setPath(dijkstra.getShortestPathNodes());
+            rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal());
         }
         if (IsKeyPressed(KEY_THREE)) {
             currentPresetIndex = 2;
             dijkstra.applyPreset(2);
             dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
                                       navGraph.getVertices(), navGraph.getBlockedEdgesMap());
-            rover.setPath(dijkstra.getShortestPathNodes());
+            rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal());
         }
         if (IsKeyPressed(KEY_FOUR)) {
             currentPresetIndex = 3;
             dijkstra.applyPreset(3);
             dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
                                       navGraph.getVertices(), navGraph.getBlockedEdgesMap());
-            rover.setPath(dijkstra.getShortestPathNodes());
+            rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal());
         }
         if (IsKeyPressed(KEY_FIVE)) {
             currentPresetIndex = 4;
             dijkstra.applyPreset(4);
             dijkstra.solveWithHistory(navGraph.getStartNode(), navGraph.getEndNode(), 
                                       navGraph.getVertices(), navGraph.getBlockedEdgesMap());
-            rover.setPath(dijkstra.getShortestPathNodes());
+            rover.setPath(dijkstra.getShortestPathNodes(), dijkstra.isPartialPath(), dijkstra.getDistanceToGoal());
         }
 
         // Phase 5: Planetary Rover Driving Controls & Camera Focus
         if (IsKeyPressed(KEY_TAB)) {
             rover.toggleAutonomous();
+        }
+        if (IsKeyPressed(KEY_T)) {
+            // Direct Off-Road Infiltration / Traverse to Goal Beacon
+            if (navGraph.getEndNode()) {
+                rover.engageDirectHoming(navGraph.getEndNode()->position);
+            }
         }
         if (IsKeyPressed(KEY_F)) {
             cameraController.focusOn(rover.getPosition(), 22.0f);
@@ -611,11 +620,28 @@ int main() {
                     float pulse = 0.5f + 0.5f * sinf(sceneTime * 6.0f);
                     Color standoffCol = ColorAlpha(Color{ 255, 175, 45, 255 }, 0.55f + 0.45f * pulse);
                     
-                    // Standoff targeting beam and rings
-                    DrawLine3D(standoffPos, goalPos, standoffCol);
+                    // Standoff targeting sightline beam and rings (elevated above ground)
+                    DrawLine3D(Vector3Add(standoffPos, Vector3{ 0, 1.2f, 0 }), Vector3Add(goalPos, Vector3{ 0, 1.5f, 0 }), standoffCol);
                     DrawSphereWires(standoffPos, 1.6f + 0.4f * pulse, 6, 6, standoffCol);
                     DrawCircle3D(standoffPos, 3.0f, Vector3{ 0, 1, 0 }, 90.0f, standoffCol);
+
+                    // When rover arrives at standoff vantage point: prominent arrival beacon indicator
+                    if (rover.isAtStandoffVantage()) {
+                        Vector3 poleTop = Vector3Add(standoffPos, Vector3{ 0.0f, 6.0f, 0.0f });
+                        DrawLine3D(standoffPos, poleTop, Color{ 255, 195, 50, 255 });
+                        DrawSphereWires(poleTop, 0.7f + 0.2f * pulse, 6, 6, Color{ 255, 215, 60, 255 });
+                        DrawCircle3D(standoffPos, 4.5f + sinf(sceneTime * 3.0f) * 0.8f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(GOLD, 0.5f));
+                    }
                 }
+            }
+
+            // Direct Off-Road Homing Line (when user forces direct traverse toward blocked goal)
+            if (rover.isDirectHoming() && navGraph.getEndNode()) {
+                Vector3 roverPos = rover.getPosition();
+                Vector3 goalPos = navGraph.getEndNode()->position;
+                float pulse = 0.5f + 0.5f * sinf(sceneTime * 10.0f);
+                Color homingCol = ColorAlpha(Color{ 255, 90, 30, 255 }, 0.7f + 0.3f * pulse);
+                DrawLine3D(Vector3Add(roverPos, Vector3{ 0, 0.8f, 0 }), Vector3Add(goalPos, Vector3{ 0, 1.2f, 0 }), homingCol);
             }
 
             // G. Draw Draped NavGraph Nodes (Prominent Glowing 3D Spheres with Distance LOD)
@@ -921,7 +947,8 @@ int main() {
             DrawText("ROVER NAVIGATION (WASD)", c2X, deckY + 10, 10, Color{ 46, 204, 113, 255 });
             int x3 = c2X;
             x3 += DrawKeyBind(x3, deckY + 28, "Tab", rover.isAutonomous() ? "Manual" : "Auto Drive") + 8;
-            x3 += DrawKeyBind(x3, deckY + 28, "WASD", "Drive (S: Rev)") + 8;
+            x3 += DrawKeyBind(x3, deckY + 28, "T", "Traverse") + 8;
+            x3 += DrawKeyBind(x3, deckY + 28, "WASD", "Drive") + 8;
             DrawKeyBind(x3, deckY + 28, "Space", "Brake");
             int x4 = c2X;
             x4 += DrawKeyBind(x4, deckY + 54, "R", "Reset") + 8;

@@ -48,10 +48,14 @@ public:
     void render(float sceneTime) const;
 
     // Autonomous Pure Pursuit Waypoint Navigation
-    void setPath(const std::vector<const Vertex3D*>& pathNodes);
+    void setPath(const std::vector<const Vertex3D*>& pathNodes, bool isPartial = false, float standoffDist = 0.0f);
+    void engageDirectHoming(Vector3 targetPos);
     void setAutonomous(bool autoDrive) { m_isAutonomous = autoDrive; }
     bool isAutonomous() const { return m_isAutonomous; }
     bool hasReachedGoal() const { return m_hasReachedGoal; }
+    bool isAtStandoffVantage() const { return m_isAtStandoffVantage; }
+    bool isDirectHoming() const { return m_isDirectHoming; }
+    float getStandoffDistance() const { return m_standoffDist; }
     void toggleAutonomous() { m_isAutonomous = !m_isAutonomous; }
 
     // Manual Drive Overrides (when autonomous is paused)
@@ -174,6 +178,10 @@ private:
     float m_crossTrackError;
     bool m_isAutonomous;
     bool m_hasReachedGoal;
+    bool m_isPartialPath;
+    float m_standoffDist;
+    bool m_isAtStandoffVantage;
+    bool m_isDirectHoming;
 
     // Camera Mode
     RoverCameraMode m_cameraMode;
