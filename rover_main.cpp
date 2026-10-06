@@ -270,7 +270,7 @@ int main() {
         float now = static_cast<float>(GetTime());
 
         float distFromLastLazy = Vector3Distance(explorationCenter, lastLazyDiscoveryPos);
-        if (distFromLastLazy > 18.0f && (now - lastDiscoveryTime > 0.06f)) {
+        if (distFromLastLazy > 24.0f && (now - lastDiscoveryTime > 0.20f)) {
             lastLazyDiscoveryPos = explorationCenter;
             lastDiscoveryTime = now;
             navGraph.generatePersistentPlanetaryGrid(terrain, explorationCenter, 96.0f, 12.0f);
@@ -633,12 +633,17 @@ int main() {
                 DrawCircle3D(Vector3{ 0.0f, -224.0f, 0.0f }, 738.0f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 180, 85, 55, 255 }, 0.20f));
             }
 
-            // C. Draw Static Boulders (Craggy rock shading with sunlit facets)
+            // C. Draw Static Boulders (Craggy rock shading with sunlit facets and distance LOD)
             if (showBoulders) {
+                Vector3 camPos = activeCamera.position;
                 for (const auto& b : physics.getBoulders()) {
+                    float distToCam = Vector3Distance(camPos, b.pos);
+                    if (distToCam > 280.0f) continue;
                     DrawSphere(b.pos, b.radius, Color{ 78, 56, 48, 255 });
-                    DrawSphere(Vector3Add(b.pos, Vector3{ 0.0f, b.radius * 0.18f, 0.0f }), b.radius * 0.88f, Color{ 115, 88, 76, 255 });
-                    DrawSphereWires(b.pos, b.radius, 6, 6, ColorAlpha(Color{ 35, 24, 20, 255 }, 0.45f));
+                    if (distToCam < 160.0f) {
+                        DrawSphere(Vector3Add(b.pos, Vector3{ 0.0f, b.radius * 0.18f, 0.0f }), b.radius * 0.88f, Color{ 115, 88, 76, 255 });
+                        DrawSphereWires(b.pos, b.radius, 6, 6, ColorAlpha(Color{ 35, 24, 20, 255 }, 0.45f));
+                    }
                 }
             }
 
@@ -686,7 +691,7 @@ int main() {
                 DrawLine3D(Vector3Add(roverPos, Vector3{ 0, 0.8f, 0 }), Vector3Add(goalPos, Vector3{ 0, 1.2f, 0 }), homingCol);
             }
 
-            // G. Draw Draped NavGraph Nodes (Prominent Glowing 3D Spheres with Distance LOD)
+            // G. Draw Draped NavGraph Nodes (Prominent Glowing 3D Spheres with Distance LOD Culling)
             if (showNodes) {
                 Vector3 camPos = activeCamera.position;
                 for (const Vertex3D* v : navGraph.getVertices()) {
@@ -695,11 +700,14 @@ int main() {
                     }
 
                     float distToCam = Vector3Distance(camPos, v->position);
+                    if (distToCam > 160.0f) {
+                        continue; // Skip rendering distant nodes
+                    }
 
                     if (v->state == NodeState::IMPASSABLE) {
                         // Prominent Hazard Node on steep slopes / cliffs / boulder hazards
                         DrawSphere(v->position, 0.70f, Color{ 235, 65, 50, 220 });
-                        if (distToCam < 260.0f) {
+                        if (distToCam < 90.0f) {
                             DrawSphereWires(v->position, 0.90f, 4, 4, ColorAlpha(RED, 0.50f));
                         }
                         continue;
@@ -708,7 +716,7 @@ int main() {
                     Color nodeCol = GraphRenderer3D::getNodeColor(v->state);
                     float r = 0.90f; // Prominently visible from panoramic orbit camera!
                     DrawSphere(v->position, r, nodeCol);
-                    if (distToCam < 260.0f) {
+                    if (distToCam < 90.0f) {
                         DrawSphereWires(v->position, r * 1.25f, 6, 6, ColorAlpha(nodeCol, 0.60f));
                         DrawLine3D(v->position, Vector3{ v->position.x, v->position.y - 0.5f, v->position.z }, ColorAlpha(nodeCol, 0.8f));
                     }

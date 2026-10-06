@@ -195,10 +195,12 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
         if (bestEnd) setEndNode(bestEnd);
     }
 
-    if (m_physics) {
-        validateEdgesWithPhysics(*m_physics, 0.6f);
-    } else {
-        buildEdgeMeshes();
+    if (!newNodes.empty()) {
+        if (m_physics) {
+            validateEdgesWithPhysics(*m_physics, 0.6f);
+        } else {
+            buildEdgeMeshes();
+        }
     }
 }
 
@@ -206,7 +208,7 @@ static Mesh buildBatchEdgeMesh(const std::vector<std::pair<Vector3, Vector3>>& e
     Mesh mesh = {};
     if (edgePairs.empty()) return mesh;
 
-    int numEdges = static_cast<int>(edgePairs.size());
+    int numEdges = std::min<int>(static_cast<int>(edgePairs.size()), 8000);
     int numVertices = numEdges * 8;
     int numTriangles = numEdges * 8;
 
