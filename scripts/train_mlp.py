@@ -43,8 +43,8 @@ Y = []
 Y_passable = []
 
 DEG2RAD = math.pi / 180.0
-MAX_SAFE_SLOPE = 22.0 * DEG2RAD
-MAX_SAFE_SIDE_SLOPE = 18.0 * DEG2RAD
+MAX_SAFE_SLOPE = 28.0 * DEG2RAD
+MAX_SAFE_SIDE_SLOPE = 24.0 * DEG2RAD
 
 for _ in range(NUM_SAMPLES):
     # Sample realistic terrain variations
@@ -65,8 +65,8 @@ for _ in range(NUM_SAMPLES):
         max_slope > MAX_SAFE_SLOPE or
         segment_slope > MAX_SAFE_SLOPE or
         side_slope > MAX_SAFE_SIDE_SLOPE or
-        delta_normal > 0.18 or
-        cliff_prox >= 1.0 or
+        delta_normal > 0.28 or
+        cliff_prox >= 1.2 or
         math.tan(max_slope) > friction
     )
 
@@ -380,7 +380,7 @@ public:
 
         // Clamp to positive cost domain
         float costMult = std::max(1.0f, sum);
-        bool passable = (costMult < 35.0f);
+        bool passable = (costMult < 90.0f);
 
         auto end = std::chrono::high_resolution_clock::now();
         float micros = std::chrono::duration<float, std::micro>(end - start).count();
