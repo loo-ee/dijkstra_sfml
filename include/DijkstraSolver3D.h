@@ -96,6 +96,7 @@ public:
     
     // Result Path & Telemetry
     std::vector<const Vertex3D*> getShortestPathNodes() const;
+    std::vector<const Vertex3D*> getSnapshotPathNodes() const;
     const PathStats& getPathStats() const { return m_pathStats; }
     bool isPartialPath() const { return m_pathStats.isPartial; }
     float getDistanceToGoal() const { return m_pathStats.distanceToGoal; }

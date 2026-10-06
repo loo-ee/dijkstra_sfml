@@ -59,6 +59,8 @@ static void ApplyTerrainPreset(
     terrain.setPreset(preset);
     terrain.generate();
 
+    navGraph.setPhysicsWorld(&physics);
+
     // Set realistic gravity for this planetary environment (Mars: 3.71, Moon: 1.62, Earth: 9.81)
     physics.setGravity(terrain.getPresetGravity());
 
@@ -280,12 +282,12 @@ int main() {
         // Handle Autonomous Dynamic Route Recalculation (Hazard / Boulder Avoidance)
         if (rover.isReplanRequested()) {
             Vector3 roverPos = rover.getPosition();
-            Vertex3D* currentNearest = navGraph.getClosestWalkableNode(roverPos);
+            Vector3 roverFwd = rover.getForward();
 
-            // Block the impassable edge if a specific hazard position was probed
+            // Block the impassable edge near the probed hazard position
             Vector3 hazardPos = rover.getHazardPos();
             if (Vector3LengthSqr(hazardPos) > 0.1f) {
-                if (navGraph.blockEdgeBetweenPositions(roverPos, hazardPos)) {
+                if (navGraph.blockEdgeNearPosition(hazardPos, 8.0f)) {
                     // Update blocked edge count
                     blockedEdgeCount = 0;
                     for (const auto& e : navGraph.getEdges()) {
@@ -294,13 +296,69 @@ int main() {
                 }
             }
 
-            if (currentNearest && navGraph.getEndNode() && currentNearest != navGraph.getEndNode()) {
-                dijkstra.solveWithHistory(currentNearest, navGraph.getEndNode(),
-                                          navGraph.getVertices(), navGraph.getBlockedEdgesMap());
-                const auto& newPath = dijkstra.getShortestPathNodes();
-                if (!newPath.empty()) {
+            // Ensure grid around rover and goal is populated with nodes so detour paths can be found
+            if (navGraph.getEndNode()) {
+                navGraph.ensureCorridor(terrain, roverPos, navGraph.getEndNode()->position, navGraph.getSpacing());
+            }
+            navGraph.generatePersistentPlanetaryGrid(terrain, roverPos, 120.0f, navGraph.getSpacing());
+
+            // Find candidate walkable nodes near the rover
+            struct CandidateNode {
+                Vertex3D* node;
+                float score;
+            };
+            std::vector<CandidateNode> candidates;
+            for (Vertex3D* v : navGraph.getVertices()) {
+                if (!v || !v->isWalkable) continue;
+                Vector3 toV = Vector3Subtract(v->position, roverPos);
+                float dot = Vector3DotProduct(toV, roverFwd);
+                float dsq = Vector3DistanceSqr(roverPos, v->position);
+                if (dsq > 40.0f * 40.0f) continue;
+                float score = (dot > 0.0f) ? dsq : (dsq + 80.0f);
+                candidates.push_back({ v, score });
+            }
+            std::sort(candidates.begin(), candidates.end(), [](const CandidateNode& a, const CandidateNode& b) {
+                return a.score < b.score;
+            });
+
+            if (candidates.empty()) {
+                Vertex3D* walkable = navGraph.getClosestWalkableNode(roverPos);
+                if (walkable) candidates.push_back({ walkable, 0.0f });
+            }
+
+            if (!candidates.empty() && navGraph.getEndNode()) {
+                std::vector<const Vertex3D*> bestPath;
+                bool bestIsPartial = true;
+                float bestDistToGoal = 1e9f;
+
+                for (size_t i = 0; i < std::min<size_t>(candidates.size(), 4); ++i) {
+                    Vertex3D* candNode = candidates[i].node;
+                    if (!candNode || candNode == navGraph.getEndNode()) continue;
+
+                    dijkstra.solveWithHistory(candNode, navGraph.getEndNode(),
+                                              navGraph.getVertices(), navGraph.getBlockedEdgesMap());
+                    const auto& path = dijkstra.getShortestPathNodes();
+                    if (!path.empty()) {
+                        bool isPartial = dijkstra.isPartialPath();
+                        float distToGoal = dijkstra.getDistanceToGoal();
+                        if (!isPartial) {
+                            bestPath = path;
+                            bestIsPartial = false;
+                            bestDistToGoal = 0.0f;
+                            break;
+                        } else if (distToGoal < bestDistToGoal) {
+                            bestPath = path;
+                            bestIsPartial = true;
+                            bestDistToGoal = distToGoal;
+                        }
+                    }
+                }
+
+                if (!bestPath.empty()) {
                     Vector3 goalPos = navGraph.getEndNode() ? navGraph.getEndNode()->position : Vector3{ 0, 0, 0 };
-                    rover.setPath(newPath, dijkstra.isPartialPath(), dijkstra.getDistanceToGoal(), goalPos);
+                    rover.setPath(bestPath, bestIsPartial, bestDistToGoal, goalPos);
+                } else {
+                    rover.engageDirectHoming(navGraph.getEndNode()->position);
                 }
             }
             rover.clearReplanRequest();
@@ -404,9 +462,13 @@ int main() {
             rover.toggleAutonomous();
         }
         if (IsKeyPressed(KEY_T)) {
-            // Direct Off-Road Infiltration / Traverse to Goal Beacon
-            if (navGraph.getEndNode()) {
-                rover.engageDirectHoming(navGraph.getEndNode()->position);
+            if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) {
+                // Direct Off-Road Infiltration / Traverse to Goal Beacon (Shift+T)
+                if (navGraph.getEndNode()) {
+                    rover.engageDirectHoming(navGraph.getEndNode()->position);
+                }
+            } else {
+                showTerrain = !showTerrain;
             }
         }
         if (IsKeyPressed(KEY_F)) {
@@ -520,7 +582,6 @@ int main() {
         }
 
         // Keyboard Display Controls (All conflict-free hotkeys)
-        if (IsKeyPressed(KEY_T)) showTerrain = !showTerrain;
         if (IsKeyPressed(KEY_E)) showEdges = !showEdges;
         if (IsKeyPressed(KEY_N)) showNodes = !showNodes;
         if (IsKeyPressed(KEY_O)) showBoulders = !showBoulders;

@@ -181,6 +181,7 @@ private:
     bool m_isPartialPath;
     float m_standoffDist;
     bool m_isAtStandoffVantage;
+    float m_standoffTimer;
     bool m_isDirectHoming;
     Vector3 m_finalGoalPos;
 

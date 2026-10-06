@@ -71,8 +71,8 @@ def parse_arguments():
 # 7: turn_deviation   [0.0, 2.0]      (1 - cos(delta_psi))
 
 DEG2RAD = math.pi / 180.0
-MAX_SAFE_SLOPE = 28.0 * DEG2RAD       # ~0.488 rad
-MAX_SAFE_SIDE_SLOPE = 24.0 * DEG2RAD  # ~0.418 rad
+MAX_SAFE_SLOPE = 20.0 * DEG2RAD       # ~0.349 rad
+MAX_SAFE_SIDE_SLOPE = 18.0 * DEG2RAD  # ~0.314 rad
 IMPASSABLE_COST = 50.0                # High penalty asymptote for neural net training
 
 BIOMES = [

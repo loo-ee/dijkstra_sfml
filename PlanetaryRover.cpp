@@ -51,6 +51,7 @@ PlanetaryRover::PlanetaryRover()
     , m_isPartialPath(false)
     , m_standoffDist(0.0f)
     , m_isAtStandoffVantage(false)
+    , m_standoffTimer(0.0f)
     , m_isDirectHoming(false)
     , m_cameraMode(RoverCameraMode::ORBIT)
     , m_chaseCamPos{ 0, 10, -10 }
@@ -137,6 +138,7 @@ void PlanetaryRover::reset(PhysicsWorld& physics, Vector3 spawnPos, float yawAng
     m_isPartialPath = false;
     m_standoffDist = 0.0f;
     m_isAtStandoffVantage = false;
+    m_standoffTimer = 0.0f;
     m_isDirectHoming = false;
     m_currentWaypointIndex = 0;
 
@@ -168,11 +170,32 @@ void PlanetaryRover::setPath(const std::vector<const Vertex3D*>& pathNodes, bool
     m_standoffDist = standoffDist;
     m_finalGoalPos = finalGoalPos;
     m_isAtStandoffVantage = false;
+    m_standoffTimer = 0.0f;
     m_isDirectHoming = false;
-    m_currentWaypointIndex = 0;
     m_hasReachedGoal = false;
+
+    // Intelligent Waypoint Progression on new/updated path:
+    // If the rover is already moving, find the best forward waypoint along the rover's forward vector
+    // to prevent the rover from turning around 180 deg to reach path[0] if path[0] is behind it.
+    m_currentWaypointIndex = 0;
+    if (m_waypoints.size() > 1 && Vector3LengthSqr(m_linearVelocity) > 0.05f) {
+        float bestDist = 1e9f;
+        int bestIdx = 0;
+        for (size_t i = 0; i < std::min<size_t>(m_waypoints.size(), 5); ++i) {
+            Vector3 toWp = Vector3Subtract(m_waypoints[i], m_position);
+            float dotFwd = Vector3DotProduct(toWp, m_forward);
+            float d = Vector2Distance(Vector2{ m_position.x, m_position.z }, 
+                                      Vector2{ m_waypoints[i].x, m_waypoints[i].z });
+            if (dotFwd > -0.2f && d < bestDist) {
+                bestDist = d;
+                bestIdx = static_cast<int>(i);
+            }
+        }
+        m_currentWaypointIndex = bestIdx;
+    }
+
     if (!m_waypoints.empty()) {
-        m_targetWaypoint = m_waypoints.front();
+        m_targetWaypoint = m_waypoints[m_currentWaypointIndex];
     }
 }
 
@@ -184,6 +207,7 @@ void PlanetaryRover::engageDirectHoming(Vector3 targetPos) {
     m_isPartialPath = false;
     m_standoffDist = 0.0f;
     m_isAtStandoffVantage = false;
+    m_standoffTimer = 0.0f;
     m_isDirectHoming = true;
     m_hasReachedGoal = false;
     m_isAutonomous = true;
@@ -303,33 +327,39 @@ void PlanetaryRover::updatePurePursuit(PhysicsWorld& physics, float dt) {
     if (distToGoal < 1.6f) {
         if (m_isPartialPath && !m_isDirectHoming) {
             m_isAtStandoffVantage = true;
-            // In autonomous mode: do NOT halt permanently at standoff!
-            // Seamlessly transition to active off-road infiltration straight toward final goal beacon!
-            if (m_isAutonomous && Vector3LengthSqr(m_finalGoalPos) > 0.1f) {
-                m_waypoints.clear();
-                m_waypoints.push_back(m_finalGoalPos);
-                m_currentWaypointIndex = 0;
-                m_targetWaypoint = m_finalGoalPos;
-                m_isDirectHoming = true;
-                m_isPartialPath = false;
-                m_hasReachedGoal = false;
-            } else {
-                m_hasReachedGoal = false;
-                m_throttleInput = 0.0f;
-                m_brakeInput = 1.0f;
-                m_steerInput = 0.0f;
-                m_isReversing = false;
-                return;
+            m_hasReachedGoal = false;
+            m_standoffTimer += dt;
+
+            // When reaching standoff vantage point, pause briefly (0.5s) to scan terrain,
+            // then trigger an active detour replan and attempt safe drive towards final goal/nearest node
+            if (m_standoffTimer >= 0.5f) {
+                m_standoffTimer = 0.0f;
+                triggerReplan("STANDOFF PROBING SAFE DETOUR", m_finalGoalPos);
+
+                float distToFinal = Vector2Distance(Vector2{ m_position.x, m_position.z }, Vector2{ m_finalGoalPos.x, m_finalGoalPos.z });
+                if (distToFinal > 1.8f) {
+                    engageDirectHoming(m_finalGoalPos);
+                    return;
+                }
             }
+
+            m_throttleInput = 0.0f;
+            m_brakeInput = 0.6f;
+            m_steerInput = 0.0f;
+            m_isReversing = false;
+            return;
         } else {
             m_hasReachedGoal = true;
             m_isAtStandoffVantage = false;
+            m_standoffTimer = 0.0f;
             m_throttleInput = 0.0f;
             m_brakeInput = 1.0f;
             m_steerInput = 0.0f;
             m_isReversing = false;
             return;
         }
+    } else {
+        m_standoffTimer = 0.0f;
     }
 
     // -------------------------------------------------------------
@@ -354,7 +384,7 @@ void PlanetaryRover::updatePurePursuit(PhysicsWorld& physics, float dt) {
         }
     }
 
-    // B. Terrain probe 2.6m ahead: check for impassable slope / flip hazard (> 22 deg)
+    // B. Terrain probe 2.6m ahead: check for impassable slope / flip hazard (>= 20 deg)
     Vector3 probeAhead = Vector3Add(m_position, Vector3Scale(m_forward, 2.6f));
     Vector3 probeHit, probeNormal;
     if (physics.raycast(Vector3{ probeAhead.x, probeAhead.y + 4.0f, probeAhead.z },
@@ -364,15 +394,15 @@ void PlanetaryRover::updatePurePursuit(PhysicsWorld& physics, float dt) {
         float slopeAngleDeg = atan2f(deltaY, 2.6f) * RAD2DEG;
         float normalTiltDeg = acosf(Clamp(probeNormal.y, -1.0f, 1.0f)) * RAD2DEG;
 
-        // Uphill slope > 22 deg or ground surface normal tilt > 25 deg threatens rollover
-        if (slopeAngleDeg > 22.0f || (deltaY > 0.65f && normalTiltDeg > 25.0f)) {
+        // Uphill slope >= 20 deg or ground surface normal tilt >= 20 deg threatens rollover/stall
+        if (slopeAngleDeg >= 20.0f || (deltaY > 0.55f && normalTiltDeg >= 20.0f)) {
             hasSteepUphill = true;
             detectedHazardPos = probeHit;
         }
     }
 
-    // C. Current pitch rollover hazard: climbing steep slope (> 20 deg) and stalled
-    if (m_pitchDeg > 20.0f && fabsf(m_speed) < 0.15f && m_throttleInput > 0.25f) {
+    // C. Current pitch rollover hazard: climbing steep slope (> 18 deg) and stalled
+    if (m_pitchDeg > 18.0f && fabsf(m_speed) < 0.15f && m_throttleInput > 0.25f) {
         hasSteepUphill = true;
         detectedHazardPos = Vector3Add(m_position, Vector3Scale(m_forward, 1.8f));
     }
@@ -525,10 +555,10 @@ void PlanetaryRover::updatePurePursuit(PhysicsWorld& physics, float dt) {
         cruiseSpeed *= descentFactor;
     }
 
-    // Incline Assist
+    // Incline Assist: Generates dynamic torque boost when ascending slopes
     float inclineFactor = 1.0f;
-    if (m_pitchDeg > 2.0f) {
-        inclineFactor += 1.8f * fminf(1.0f, sinf(m_pitchDeg * DEG2RAD));
+    if (m_pitchDeg > 1.5f) {
+        inclineFactor += 2.5f * fminf(1.0f, sinf(m_pitchDeg * DEG2RAD));
     }
 
     // Speed error control with Active Hill Descent Control (HDC)
@@ -688,8 +718,8 @@ void PlanetaryRover::updateSuspensionAndTires(PhysicsWorld& physics, float dt) {
                 m_tcsEngagedOverall = true;
             }
 
-            // Motor Drive Force (All-Wheel Drive 4WD scaled with gravity)
-            const float maxMotorForcePerWheel = cornerWeight * 2.6f;
+            // Motor Drive Force (All-Wheel Drive 4WD scaled with gravity & incline capability)
+            const float maxMotorForcePerWheel = cornerWeight * 3.4f;
             float driveForceMag = m_throttleInput * maxMotorForcePerWheel * tcsFactor;
 
             // Braking Force

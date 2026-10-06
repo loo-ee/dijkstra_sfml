@@ -3,6 +3,7 @@
 #include <cmath>
 #include <algorithm>
 #include <iostream>
+#include <unordered_set>
 
 DijkstraSolver3D::DijkstraSolver3D() {
     applyPreset(0);
@@ -69,9 +70,9 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
         return std::numeric_limits<float>::infinity();
     }
 
-    // Hard traversability threshold: slopes > 28 deg are impassable for rovers (physical rollover limit)
-    constexpr float MAX_TRAVERSABLE_SLOPE = 28.0f * DEG2RAD;
-    if (u->slopeAngleRad > MAX_TRAVERSABLE_SLOPE || v->slopeAngleRad > MAX_TRAVERSABLE_SLOPE) {
+    // Hard traversability threshold: slopes >= 20 deg are impassable for rovers to ensure safe climbing without stall
+    constexpr float MAX_TRAVERSABLE_SLOPE = 20.0f * DEG2RAD;
+    if (u->slopeAngleRad >= MAX_TRAVERSABLE_SLOPE || v->slopeAngleRad >= MAX_TRAVERSABLE_SLOPE) {
         return std::numeric_limits<float>::infinity();
     }
 
@@ -85,7 +86,7 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
     float horizDist = sqrtf(dx * dx + dz * dz);
 
     float segmentSlopeRad = atan2f(fabsf(dy), std::max(horizDist, 1e-3f));
-    if (segmentSlopeRad > MAX_TRAVERSABLE_SLOPE) {
+    if (segmentSlopeRad >= MAX_TRAVERSABLE_SLOPE) {
         return std::numeric_limits<float>::infinity();
     }
 
@@ -104,14 +105,14 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
         sideSlopeRad = localSlope * sinSide;
         float sideSlopeDeg = sideSlopeRad * RAD2DEG;
 
-        // Above 24 degrees cross-slope: critical lateral rollover hazard -> strictly impassable
-        if (sideSlopeDeg > 24.0f) {
+        // Above 18 degrees cross-slope: critical lateral rollover hazard -> strictly impassable
+        if (sideSlopeDeg > 18.0f) {
             return std::numeric_limits<float>::infinity();
         }
-        // Above 8 degrees cross-slope: progressive penalty to funnel paths to flat terrain / valleys
-        if (sideSlopeDeg > 8.0f) {
-            float excess = (sideSlopeDeg - 8.0f) / 16.0f;
-            sideSlopePenalty = 5.0f * (excess * excess);
+        // Above 6 degrees cross-slope: progressive penalty to funnel paths to flat terrain / valleys
+        if (sideSlopeDeg > 6.0f) {
+            float excess = (sideSlopeDeg - 6.0f) / 12.0f;
+            sideSlopePenalty = 6.0f * (excess * excess);
         }
     }
 
@@ -120,8 +121,8 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
     float bumpPenalty = 0.0f;
     float normalDot = Clamp(Vector3DotProduct(u->surfaceNormal, v->surfaceNormal), -1.0f, 1.0f);
     float deltaNormal = 1.0f - normalDot;
-    // Divergence > 45 degrees indicates sharp knife-edge crest that risks high-centering chassis
-    if (deltaNormal > 0.28f) {
+    // Divergence > 40 degrees indicates sharp knife-edge crest that risks high-centering chassis
+    if (deltaNormal > 0.23f) {
         return std::numeric_limits<float>::infinity();
     }
     if (deltaNormal > 0.02f) {
@@ -130,10 +131,10 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
 
     // 4. Cliff & Drop-Off Proximity Standoff Buffer
     float maxCliffProx = std::max(u->cliffProximity, v->cliffProximity);
-    if (maxCliffProx >= 1.2f) {
+    if (maxCliffProx >= 1.0f) {
         return std::numeric_limits<float>::infinity();
     }
-    float cliffBufferPenalty = 4.0f * (maxCliffProx * maxCliffProx);
+    float cliffBufferPenalty = 5.0f * (maxCliffProx * maxCliffProx);
 
     float maxSlopeRad = std::max(segmentSlopeRad, std::max(u->slopeAngleRad, v->slopeAngleRad));
     float mu_s = 0.5f * (u->surfaceFriction + v->surfaceFriction);
@@ -167,15 +168,17 @@ float DijkstraSolver3D::computeEdgeCost(const Vertex3D* u, const Vertex3D* v,
         return d * mlResult.costMultiplier;
     }
 
-    // 5. Elevation Delta & Gravity / Braking Work
+    // 5. Elevation Delta & Gravity / Braking Work (Strong physical penalty for steep uphill)
     float gravityFactor = 0.0f;
     if (dy >= 0.0f) {
-        // Climbing uphill requires motor energy against gravity
-        gravityFactor = m_weights.alpha * (dy / d);
+        // Non-linear uphill steepness penalty: smooth at low grade, strongly discourages steep climbs
+        float slopeRatio = segmentSlopeRad / MAX_TRAVERSABLE_SLOPE;
+        float steepnessPenalty = 6.0f * (slopeRatio * slopeRatio);
+        gravityFactor = m_weights.alpha * (dy / d) + steepnessPenalty;
     } else {
         // Steep descent requires braking work and introduces slide hazard (no negative discount)
-        if (segmentSlopeRad > 8.0f * DEG2RAD) {
-            gravityFactor = 1.5f * (fabsf(dy) / d);
+        if (segmentSlopeRad > 6.0f * DEG2RAD) {
+            gravityFactor = 2.0f * (fabsf(dy) / d);
         }
     }
 
@@ -339,6 +342,7 @@ void DijkstraSolver3D::solveWithHistory(Vertex3D* start, Vertex3D* end,
 
     std::unordered_map<std::string, float> distances;
     std::unordered_map<std::string, std::string> parents;
+    std::unordered_set<std::string> visitedSet;
     std::vector<std::string> visited;
 
     for (Vertex3D* v : m_allVertices) {
@@ -385,6 +389,7 @@ void DijkstraSolver3D::solveWithHistory(Vertex3D* start, Vertex3D* end,
 
         if (d > distances[u->name]) continue;
 
+        visitedSet.insert(u->name);
         visited.push_back(u->name);
 
         recordSnapshot(u->name, "", "Settled Node [" + u->name + "] | Accumulated Energy Cost: " + TextFormat("%.1f", d), 0.0f, false, false);
@@ -402,8 +407,8 @@ void DijkstraSolver3D::solveWithHistory(Vertex3D* start, Vertex3D* end,
             if (it == m_vertexMap.end()) continue;
             Vertex3D* v = it->second;
 
-            // Skip already visited nodes
-            if (std::find(visited.begin(), visited.end(), v->name) != visited.end()) {
+            // Skip already visited nodes (O(1) lookup)
+            if (visitedSet.find(v->name) != visitedSet.end()) {
                 continue;
             }
 
@@ -632,15 +637,18 @@ const DijkstraSnapshot3D& DijkstraSolver3D::getCurrentSnapshot() const {
 
 std::vector<const Vertex3D*> DijkstraSolver3D::getShortestPathNodes() const {
     std::vector<const Vertex3D*> nodes;
-    if (m_history.empty()) {
-        for (const auto& name : m_cachedPathNames) {
-            auto it = m_vertexMap.find(name);
-            if (it != m_vertexMap.end()) {
-                nodes.push_back(it->second);
-            }
+    for (const auto& name : m_cachedPathNames) {
+        auto it = m_vertexMap.find(name);
+        if (it != m_vertexMap.end() && it->second) {
+            nodes.push_back(it->second);
         }
-        return nodes;
     }
+    return nodes;
+}
+
+std::vector<const Vertex3D*> DijkstraSolver3D::getSnapshotPathNodes() const {
+    std::vector<const Vertex3D*> nodes;
+    if (m_history.empty() || m_currentStepIndex >= m_history.size()) return nodes;
 
     const auto& snap = m_history[m_currentStepIndex];
     if (!snap.pathFound) return nodes;

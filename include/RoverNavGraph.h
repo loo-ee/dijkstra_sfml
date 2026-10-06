@@ -27,6 +27,9 @@ public:
     RoverNavGraph(const RoverNavGraph&) = delete;
     RoverNavGraph& operator=(const RoverNavGraph&) = delete;
 
+    void setPhysicsWorld(PhysicsWorld* physics) { m_physics = physics; }
+    PhysicsWorld* getPhysicsWorld() const { return m_physics; }
+
     void clear();
     void generateTerrainGrid(const TerrainHeightfield& terrain, int gridCols, int gridRows, float spacing);
     void generateCenteredGrid(const TerrainHeightfield& terrain, Vector3 centerPos, int gridCols, int gridRows, float spacing);
@@ -38,6 +41,7 @@ public:
     Vertex3D* getClosestWalkableNode(Vector3 worldPos);
     bool blockEdge(const std::string& nodeA, const std::string& nodeB);
     bool blockEdgeBetweenPositions(Vector3 posA, Vector3 posB);
+    bool blockEdgeNearPosition(Vector3 hazardPos, float maxDist = 8.0f);
     Vertex3D* pickNodeFromRay(Ray mouseRay, float pickRadius = 2.0f);
 
     void setStartNode(Vertex3D* node);
@@ -68,6 +72,7 @@ private:
     std::unordered_map<std::string, bool> m_blockedEdgesMap;
     Vertex3D* m_startNode = nullptr;
     Vertex3D* m_endNode = nullptr;
+    PhysicsWorld* m_physics = nullptr;
 
     Model m_walkableEdgesModel = {};
     Model m_blockedEdgesModel = {};

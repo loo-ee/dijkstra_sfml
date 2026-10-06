@@ -88,8 +88,8 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
             node->slopeAngleRad = acosf(dotUp);
             node->surfaceFriction = 0.70f;
 
-            // Realistic rover mobility limit: slopes >= 28 deg (physical rollover hazard) are impassable
-            node->isWalkable = (node->slopeAngleRad < 28.0f * DEG2RAD);
+            // Realistic planetary rover mobility limit: slopes >= 20 deg are impassable to guarantee climbing safety
+            node->isWalkable = (node->slopeAngleRad < 20.0f * DEG2RAD);
 
             if (!node->isWalkable) {
                 node->state = NodeState::IMPASSABLE;
@@ -126,12 +126,19 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
             auto it = m_spatialNodes.find(nKey);
             if (it != m_spatialNodes.end()) {
                 Vertex3D* v = it->second;
-                if (!v->isWalkable || v->slopeAngleRad > 18.0f * DEG2RAD) {
+                if (!v->isWalkable || v->slopeAngleRad > 15.0f * DEG2RAD) {
                     nextToCliff = true;
                 }
                 if (v->slopeAngleRad > maxAdjSlope) {
                     maxAdjSlope = v->slopeAngleRad;
                 }
+
+                // Compute exact 3D segment slope between u and v
+                float dx = v->position.x - u->position.x;
+                float dz = v->position.z - u->position.z;
+                float dy = fabsf(v->position.y - u->position.y);
+                float horizDist = sqrtf(dx * dx + dz * dz);
+                float segSlopeRad = atan2f(dy, std::max(horizDist, 1e-3f));
 
                 // Add bidirectional edge
                 float dist = Vector3Distance(u->position, v->position);
@@ -139,7 +146,7 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
                 v->neighbors.emplace_back(u->name, dist);
 
                 // Add unique undirected edge to rendering list
-                bool steep = (!u->isWalkable || !v->isWalkable);
+                bool steep = (!u->isWalkable || !v->isWalkable || segSlopeRad >= 20.0f * DEG2RAD);
                 Color edgeColor = steep ? Color{ 180, 40, 40, 75 } : Color{ 60, 205, 255, 175 };
                 m_edges.push_back({ u->position, v->position, edgeColor, steep, u->name, v->name });
                 if (steep) {
@@ -151,7 +158,7 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
 
         if (nextToCliff) {
             u->cliffProximity = 0.85f;
-        } else if (maxAdjSlope > 14.0f * DEG2RAD) {
+        } else if (maxAdjSlope > 12.0f * DEG2RAD) {
             u->cliffProximity = 0.40f;
         }
     }
@@ -188,7 +195,11 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
         if (bestEnd) setEndNode(bestEnd);
     }
 
-    buildEdgeMeshes();
+    if (m_physics) {
+        validateEdgesWithPhysics(*m_physics, 0.6f);
+    } else {
+        buildEdgeMeshes();
+    }
 }
 
 static Mesh buildBatchEdgeMesh(const std::vector<std::pair<Vector3, Vector3>>& edgePairs, float radius, Color color) {
@@ -455,7 +466,33 @@ bool RoverNavGraph::blockEdge(const std::string& nodeA, const std::string& nodeB
     return found;
 }
 
+bool RoverNavGraph::blockEdgeNearPosition(Vector3 hazardPos, float maxDist) {
+    float minDistSq = maxDist * maxDist;
+    std::string bestA = "", bestB = "";
+    for (const auto& edge : m_edges) {
+        Vector3 AB = Vector3Subtract(edge.end, edge.start);
+        Vector3 AP = Vector3Subtract(hazardPos, edge.start);
+        float abLenSq = Vector3LengthSqr(AB);
+        if (abLenSq < 1e-4f) continue;
+        float t = Clamp(Vector3DotProduct(AP, AB) / abLenSq, 0.0f, 1.0f);
+        Vector3 closestPt = Vector3Add(edge.start, Vector3Scale(AB, t));
+        float dsq = Vector3DistanceSqr(hazardPos, closestPt);
+        if (dsq < minDistSq) {
+            minDistSq = dsq;
+            bestA = edge.startNode;
+            bestB = edge.endNode;
+        }
+    }
+    if (!bestA.empty() && !bestB.empty()) {
+        return blockEdge(bestA, bestB);
+    }
+    return false;
+}
+
 bool RoverNavGraph::blockEdgeBetweenPositions(Vector3 posA, Vector3 posB) {
+    Vector3 mid = Vector3Scale(Vector3Add(posA, posB), 0.5f);
+    if (blockEdgeNearPosition(mid, 8.0f)) return true;
+    if (blockEdgeNearPosition(posB, 6.0f)) return true;
     Vertex3D* nA = getClosestNode(posA);
     Vertex3D* nB = getClosestNode(posB);
     if (nA && nB && nA != nB) {
@@ -463,7 +500,6 @@ bool RoverNavGraph::blockEdgeBetweenPositions(Vector3 posA, Vector3 posB) {
     }
     return false;
 }
-
 
 void RoverNavGraph::setStartNode(Vertex3D* node) {
     if (!node) return;
@@ -488,7 +524,7 @@ void RoverNavGraph::ensureCorridor(const TerrainHeightfield& terrain, Vector3 st
     for (int i = 0; i <= steps; ++i) {
         float t = (steps > 0) ? (static_cast<float>(i) / steps) : 0.0f;
         Vector3 p = Vector3Lerp(startPos, endPos, t);
-        generatePersistentPlanetaryGrid(terrain, p, 72.0f, spacing);
+        generatePersistentPlanetaryGrid(terrain, p, 108.0f, spacing);
     }
 }
 
