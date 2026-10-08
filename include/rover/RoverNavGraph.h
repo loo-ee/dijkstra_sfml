@@ -51,6 +51,10 @@ public:
     void renderEdges() const;
     void unloadEdgeMeshes();
 
+    void buildNodeMeshes();
+    void renderNodes() const;
+    void unloadNodeMeshes();
+
     const std::vector<Vertex3D*>& getVertices() const { return m_vertices; }
     const std::vector<GraphEdge3D>& getEdges() const { return m_edges; }
     const std::unordered_map<std::string, bool>& getBlockedEdgesMap() const { return m_blockedEdgesMap; }
@@ -77,6 +81,10 @@ private:
     Model m_walkableEdgesModel = {};
     Model m_blockedEdgesModel = {};
     bool m_edgesModelsLoaded = false;
+
+    Model m_walkableNodesModel = {};
+    Model m_impassableNodesModel = {};
+    bool m_nodesModelsLoaded = false;
 
     int m_gridCols = 0;
     int m_gridRows = 0;

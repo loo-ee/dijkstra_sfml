@@ -12,6 +12,7 @@ RoverNavGraph::~RoverNavGraph() {
 
 void RoverNavGraph::clear() {
     unloadEdgeMeshes();
+    unloadNodeMeshes();
     for (Vertex3D* v : m_vertices) {
         delete v;
     }
@@ -200,6 +201,7 @@ void RoverNavGraph::generatePersistentPlanetaryGrid(const TerrainHeightfield& te
             validateEdgesWithPhysics(*m_physics, 0.6f);
         } else {
             buildEdgeMeshes();
+            buildNodeMeshes();
         }
     }
 }
@@ -358,6 +360,193 @@ void RoverNavGraph::renderEdges() const {
     }
 }
 
+static Mesh buildBatchNodeMesh(const std::vector<const Vertex3D*>& nodes, float radius, Color color) {
+    Mesh mesh = {};
+    if (nodes.empty()) return mesh;
+
+    int numNodes = std::min<int>(static_cast<int>(nodes.size()), 4000);
+    int numVertices = numNodes * 10;
+    int numTriangles = numNodes * 12;
+
+    mesh.vertexCount = numVertices;
+    mesh.triangleCount = numTriangles;
+
+    mesh.vertices = static_cast<float*>(MemAlloc(numVertices * 3 * sizeof(float)));
+    mesh.normals = static_cast<float*>(MemAlloc(numVertices * 3 * sizeof(float)));
+    mesh.colors = static_cast<unsigned char*>(MemAlloc(numVertices * 4 * sizeof(unsigned char)));
+    mesh.indices = static_cast<unsigned short*>(MemAlloc(numTriangles * 3 * sizeof(unsigned short)));
+
+    int vIdx = 0;
+    int tIdx = 0;
+
+    for (int i = 0; i < numNodes; ++i) {
+        const Vertex3D* node = nodes[i];
+        Vector3 pos = node->position;
+        float groundY = pos.y - 0.40f;
+
+        int baseIdx = vIdx;
+
+        float rTop = radius * 1.35f;
+        float rBot = radius * 1.35f;
+        float rEq  = radius * 0.75f;
+
+        Vector3 dVerts[6] = {
+            Vector3Add(pos, Vector3{ 0.0f, rTop, 0.0f }),
+            Vector3Subtract(pos, Vector3{ 0.0f, rBot, 0.0f }),
+            Vector3Add(pos, Vector3{ rEq, 0.0f, 0.0f }),
+            Vector3Add(pos, Vector3{ 0.0f, 0.0f, rEq }),
+            Vector3Subtract(pos, Vector3{ rEq, 0.0f, 0.0f }),
+            Vector3Subtract(pos, Vector3{ 0.0f, 0.0f, rEq })
+        };
+
+        float stemW = 0.045f;
+        Vector3 sVerts[4] = {
+            Vector3{ pos.x - stemW, groundY, pos.z },
+            Vector3{ pos.x + stemW, groundY, pos.z },
+            Vector3{ pos.x - stemW, pos.y - rBot * 0.7f, pos.z },
+            Vector3{ pos.x + stemW, pos.y - rBot * 0.7f, pos.z }
+        };
+
+        for (int k = 0; k < 6; ++k) {
+            mesh.vertices[(baseIdx + k) * 3 + 0] = dVerts[k].x;
+            mesh.vertices[(baseIdx + k) * 3 + 1] = dVerts[k].y;
+            mesh.vertices[(baseIdx + k) * 3 + 2] = dVerts[k].z;
+
+            mesh.normals[(baseIdx + k) * 3 + 0] = (k == 0 || k == 1) ? 0.0f : (dVerts[k].x - pos.x) / rEq;
+            mesh.normals[(baseIdx + k) * 3 + 1] = (k == 0) ? 1.0f : ((k == 1) ? -1.0f : 0.0f);
+            mesh.normals[(baseIdx + k) * 3 + 2] = (k == 0 || k == 1) ? 0.0f : (dVerts[k].z - pos.z) / rEq;
+
+            mesh.colors[(baseIdx + k) * 4 + 0] = color.r;
+            mesh.colors[(baseIdx + k) * 4 + 1] = color.g;
+            mesh.colors[(baseIdx + k) * 4 + 2] = color.b;
+            mesh.colors[(baseIdx + k) * 4 + 3] = color.a;
+        }
+
+        for (int k = 0; k < 4; ++k) {
+            mesh.vertices[(baseIdx + 6 + k) * 3 + 0] = sVerts[k].x;
+            mesh.vertices[(baseIdx + 6 + k) * 3 + 1] = sVerts[k].y;
+            mesh.vertices[(baseIdx + 6 + k) * 3 + 2] = sVerts[k].z;
+
+            mesh.normals[(baseIdx + 6 + k) * 3 + 0] = 0.0f;
+            mesh.normals[(baseIdx + 6 + k) * 3 + 1] = 0.0f;
+            mesh.normals[(baseIdx + 6 + k) * 3 + 2] = 1.0f;
+
+            mesh.colors[(baseIdx + 6 + k) * 4 + 0] = color.r;
+            mesh.colors[(baseIdx + 6 + k) * 4 + 1] = color.g;
+            mesh.colors[(baseIdx + 6 + k) * 4 + 2] = color.b;
+            mesh.colors[(baseIdx + 6 + k) * 4 + 3] = static_cast<unsigned char>(color.a * 0.7f);
+        }
+
+        vIdx += 10;
+
+        // Diamond Top 4 triangles
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 0);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 2);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 3);
+
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 0);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 3);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 4);
+
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 0);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 4);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 5);
+
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 0);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 5);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 2);
+
+        // Diamond Bottom 4 triangles
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 1);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 3);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 2);
+
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 1);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 4);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 3);
+
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 1);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 5);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 4);
+
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 1);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 2);
+        mesh.indices[tIdx++] = static_cast<unsigned short>(baseIdx + 5);
+
+        // Stem quad (front & back)
+        unsigned short s0 = static_cast<unsigned short>(baseIdx + 6);
+        unsigned short s1 = static_cast<unsigned short>(baseIdx + 7);
+        unsigned short s2 = static_cast<unsigned short>(baseIdx + 8);
+        unsigned short s3 = static_cast<unsigned short>(baseIdx + 9);
+
+        mesh.indices[tIdx++] = s0;
+        mesh.indices[tIdx++] = s1;
+        mesh.indices[tIdx++] = s2;
+
+        mesh.indices[tIdx++] = s2;
+        mesh.indices[tIdx++] = s1;
+        mesh.indices[tIdx++] = s3;
+
+        mesh.indices[tIdx++] = s0;
+        mesh.indices[tIdx++] = s2;
+        mesh.indices[tIdx++] = s1;
+
+        mesh.indices[tIdx++] = s2;
+        mesh.indices[tIdx++] = s3;
+        mesh.indices[tIdx++] = s1;
+    }
+
+    UploadMesh(&mesh, false);
+    return mesh;
+}
+
+void RoverNavGraph::unloadNodeMeshes() {
+    if (m_nodesModelsLoaded) {
+        if (m_walkableNodesModel.meshCount > 0) UnloadModel(m_walkableNodesModel);
+        if (m_impassableNodesModel.meshCount > 0) UnloadModel(m_impassableNodesModel);
+        m_walkableNodesModel = {};
+        m_impassableNodesModel = {};
+        m_nodesModelsLoaded = false;
+    }
+}
+
+void RoverNavGraph::buildNodeMeshes() {
+    unloadNodeMeshes();
+
+    std::vector<const Vertex3D*> walkableNodes;
+    std::vector<const Vertex3D*> impassableNodes;
+
+    for (const Vertex3D* v : m_vertices) {
+        if (!v) continue;
+        if (v == m_startNode || v == m_endNode) continue;
+        if (v->state == NodeState::IMPASSABLE || !v->isWalkable) {
+            impassableNodes.push_back(v);
+        } else {
+            walkableNodes.push_back(v);
+        }
+    }
+
+    if (!walkableNodes.empty()) {
+        Mesh wm = buildBatchNodeMesh(walkableNodes, 0.42f, Color{ 40, 215, 255, 230 });
+        m_walkableNodesModel = LoadModelFromMesh(wm);
+    }
+    if (!impassableNodes.empty()) {
+        Mesh im = buildBatchNodeMesh(impassableNodes, 0.50f, Color{ 235, 65, 50, 230 });
+        m_impassableNodesModel = LoadModelFromMesh(im);
+    }
+    m_nodesModelsLoaded = true;
+}
+
+void RoverNavGraph::renderNodes() const {
+    if (!m_nodesModelsLoaded) return;
+    if (m_walkableNodesModel.meshCount > 0) {
+        DrawModel(m_walkableNodesModel, Vector3Zero(), 1.0f, WHITE);
+    }
+    if (m_impassableNodesModel.meshCount > 0) {
+        DrawModel(m_impassableNodesModel, Vector3Zero(), 1.0f, WHITE);
+    }
+}
+
 void RoverNavGraph::validateEdgesWithPhysics(PhysicsWorld& physics, float clearanceOffset) {
     m_blockedEdgesMap.clear();
     const auto& boulders = physics.getBoulders();
@@ -400,8 +589,9 @@ void RoverNavGraph::validateEdgesWithPhysics(PhysicsWorld& physics, float cleara
         }
     }
 
-    // Rebuild GPU edge meshes with updated blocked statuses
+    // Rebuild GPU edge and node meshes with updated blocked statuses
     buildEdgeMeshes();
+    buildNodeMeshes();
 }
 
 Vertex3D* RoverNavGraph::pickNodeFromRay(Ray mouseRay, float pickRadius) {

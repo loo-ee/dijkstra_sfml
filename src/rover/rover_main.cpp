@@ -17,6 +17,7 @@
 #include "PlanetaryRover.h"
 #include "RoverTelemetryHUD.h"
 #include "SmartCostSelector.h"
+#include "FrameProfiler.h"
 
 static const TerrainHeightfield* s_activeTerrain = nullptr;
 static float SampleActiveTerrainHeight(float x, float z) {
@@ -164,7 +165,6 @@ int main() {
 
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
     InitWindow(screenWidth, screenHeight, "3D Driving Simulator - Procedural Chunks & Physics");
-    SetTargetFPS(60);
 
     // 2. Camera Setup (Overview camera)
     OrbitCameraController cameraController(
@@ -223,28 +223,41 @@ int main() {
     Vector3 sunPosition = { 160.0f, 110.0f, -130.0f };
 
     // 10. Main Simulation Loop
+    FrameProfiler::instance().init("perf_profile.log");
+
     while (!WindowShouldClose()) {
+        FrameProfiler::instance().beginFrame();
+
         float dt = GetFrameTime();
         if (dt > 0.05f) dt = 0.05f;
 
         // Step Jolt Physics (60 Hz multi-threaded)
-        physics.step(dt);
+        {
+            ProfileScope p(ProfilerSection::PHYSICS);
+            physics.step(dt);
+        }
 
         // Update Autonomous Planetary Rover & Pure Pursuit Navigation
-        rover.update(physics, dt, &terrain);
+        {
+            ProfileScope p(ProfilerSection::ROVER_UPDATE);
+            rover.update(physics, dt, &terrain);
+        }
 
         // Continuous Procedural Chunk Streaming around Vehicle
         if (infiniteWorldMode) {
+            ProfileScope p(ProfilerSection::CHUNK_STREAM);
             chunkMgr.update(rover.getPosition(), terrain, physics);
         }
 
         // Lazy-Loaded Dynamic Exploration Discovery:
         // As camera pans in Orbit mode OR rover drives into undiscovered areas, lazily unveil new nodes (radius 100m)
         // so the user can freely select and click any destination node!
-        Vector3 roverPos = rover.getPosition();
-        Vector3 camTarget = (rover.getCameraMode() == RoverCameraMode::ORBIT)
-                            ? cameraController.getCamera().target
-                            : roverPos;
+        {
+            ProfileScope p(ProfilerSection::NAV_DISCOVERY);
+            Vector3 roverPos = rover.getPosition();
+            Vector3 camTarget = (rover.getCameraMode() == RoverCameraMode::ORBIT)
+                                ? cameraController.getCamera().target
+                                : roverPos;
 
         static Vector3 lastRoverDiscoveryPos = Vector3{ 0.0f, 0.0f, 0.0f };
         static Vector3 lastCamDiscoveryPos = Vector3{ 0.0f, 0.0f, 0.0f };
@@ -359,9 +372,16 @@ int main() {
             }
             rover.clearReplanRequest();
         }
+    }
+
+    Camera3D activeCamera;
+    Vertex3D* hoveredNode = nullptr;
+
+    {
+        ProfileScope p(ProfilerSection::MOUSE_PICK);
 
         // Active Camera (Smoothly blends Orbit, Chase, or Mast Camera)
-        Camera3D activeCamera = rover.getCamera(cameraController.getCamera());
+        activeCamera = rover.getCamera(cameraController.getCamera());
 
         // Check if cursor is over any active 2D HUD cards
         Vector2 mousePos = GetMousePosition();
@@ -370,7 +390,6 @@ int main() {
         bool isOverUI = RoverTelemetryHUD::isMouseOverUI(mousePos, screenW, screenH, showHUD);
 
         // 3D Raycast Mouse Picking for Nodes (prevent picking if clicking on UI cards)
-        Vertex3D* hoveredNode = nullptr;
         if (!isOverUI) {
             Ray mouseRay = GetMouseRay(mousePos, activeCamera);
             hoveredNode = navGraph.pickNodeFromRay(mouseRay, 2.4f);
@@ -624,14 +643,17 @@ int main() {
         if (IsKeyPressed(KEY_Z)) showSpheres = !showSpheres;
         if (IsKeyPressed(KEY_K)) showWireframe = !showWireframe; // K toggle (avoids conflict with W gas pedal)
         if (IsKeyPressed(KEY_H)) showHUD = !showHUD;
+    } // End MOUSE_PICK ProfileScope
 
-        // Render Frame
-        BeginDrawing();
+    // Render Frame
+    BeginDrawing();
 
-        // 1. Explicitly clear Color and Depth buffers
-        ClearBackground(Color{ 16, 20, 30, 255 });
+    // 1. Explicitly clear Color and Depth buffers
+    ClearBackground(Color{ 16, 20, 30, 255 });
 
-        // 2. Atmospheric Sky Gradient (2D background with depth testing disabled)
+    // 2. Atmospheric Sky Gradient (2D background with depth testing disabled)
+    {
+        ProfileScope p(ProfilerSection::RENDER_SKY_SUN);
         rlDisableDepthMask();
         rlDisableDepthTest();
         DrawRectangleGradientV(0, 0, GetRenderWidth(), GetRenderHeight(), 
@@ -640,56 +662,67 @@ int main() {
         );
         rlEnableDepthTest();
         rlEnableDepthMask();
+    }
 
-        float sceneTime = static_cast<float>(GetTime());
+    float sceneTime = static_cast<float>(GetTime());
 
-        // 3D Scene Rendering
-        BeginMode3D(activeCamera);
+    // 3D Scene Rendering
+    BeginMode3D(activeCamera);
+    {
+        // A. Sun (warm bright disk with soft atmospheric halo)
         {
-            // A. Sun (warm bright disk with soft atmospheric halo)
+            ProfileScope p(ProfilerSection::RENDER_SKY_SUN);
             DrawSphere(sunPosition, 6.5f, Color{ 255, 242, 215, 255 });
             DrawSphereWires(sunPosition, 10.0f, 8, 8, ColorAlpha(Color{ 255, 225, 160, 255 }, 0.45f));
+        }
 
-            // B. Draw Procedural Terrain (Continuous 1.44km Base Horizon + Detailed Local Chunks)
-            if (showTerrain) {
-                // 1. Vast 1.44km Base Terrain Horizon (guarantees solid continuous terrain to the horizon from any high camera angle)
-                if (terrain.isLoaded()) {
-                    rlDisableBackfaceCulling();
-                    DrawModel(terrain.getModel(), Vector3{ 0.0f, -0.06f, 0.0f }, 1.0f, WHITE);
-                    rlEnableBackfaceCulling();
-                }
-
-                // 2. High-Resolution Procedural Flat Terrain Chunks on top
-                if (infiniteWorldMode && chunkMgr.isInitialized()) {
-                    chunkMgr.draw(showWireframe);
-                } else if (!infiniteWorldMode && showWireframe && terrain.isLoaded()) {
-                    DrawModelWires(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, ColorAlpha(BLACK, 0.2f));
-                }
+        // B. Draw Procedural Terrain (Continuous 1.44km Base Horizon + Detailed Local Chunks)
+        if (showTerrain) {
+            // 1. Vast 1.44km Base Terrain Horizon (guarantees solid continuous terrain to the horizon from any high camera angle)
+            if (terrain.isLoaded()) {
+                ProfileScope p(ProfilerSection::RENDER_BASE_LAND);
+                rlDisableBackfaceCulling();
+                DrawModel(terrain.getModel(), Vector3{ 0.0f, -0.06f, 0.0f }, 1.0f, WHITE);
+                rlEnableBackfaceCulling();
             }
 
-            // C. Draw Static Boulders (Craggy rock shading with sunlit facets and distance LOD)
-            if (showBoulders) {
-                Vector3 camPos = activeCamera.position;
-                for (const auto& b : physics.getBoulders()) {
-                    float distToCam = Vector3Distance(camPos, b.pos);
-                    if (distToCam > 280.0f) continue;
-                    DrawSphere(b.pos, b.radius, Color{ 78, 56, 48, 255 });
-                    if (distToCam < 160.0f) {
-                        DrawSphere(Vector3Add(b.pos, Vector3{ 0.0f, b.radius * 0.18f, 0.0f }), b.radius * 0.88f, Color{ 115, 88, 76, 255 });
-                        DrawSphereWires(b.pos, b.radius, 6, 6, ColorAlpha(Color{ 35, 24, 20, 255 }, 0.45f));
-                    }
+            // 2. High-Resolution Procedural Flat Terrain Chunks on top
+            if (infiniteWorldMode && chunkMgr.isInitialized()) {
+                ProfileScope p(ProfilerSection::RENDER_CHUNKS);
+                chunkMgr.draw(showWireframe);
+            } else if (!infiniteWorldMode && showWireframe && terrain.isLoaded()) {
+                ProfileScope p(ProfilerSection::RENDER_BASE_LAND);
+                DrawModelWires(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, ColorAlpha(BLACK, 0.2f));
+            }
+        }
+
+        // C. Draw Static Boulders (Craggy rock shading with sunlit facets and distance LOD)
+        if (showBoulders) {
+            ProfileScope p(ProfilerSection::RENDER_BOULDERS);
+            Vector3 camPos = activeCamera.position;
+            for (const auto& b : physics.getBoulders()) {
+                float distToCam = Vector3Distance(camPos, b.pos);
+                if (distToCam > 280.0f) continue;
+                DrawSphere(b.pos, b.radius, Color{ 78, 56, 48, 255 });
+                if (distToCam < 160.0f) {
+                    DrawSphere(Vector3Add(b.pos, Vector3{ 0.0f, b.radius * 0.18f, 0.0f }), b.radius * 0.88f, Color{ 115, 88, 76, 255 });
+                    DrawSphereWires(b.pos, b.radius, 6, 6, ColorAlpha(Color{ 35, 24, 20, 255 }, 0.45f));
                 }
             }
+        }
 
-            // D. Draw GPU-Batched Draped NavGraph Edges
-            if (showEdges) {
-                navGraph.renderEdges();
+        // D. Draw GPU-Batched Draped NavGraph Edges
+        if (showEdges) {
+            ProfileScope p(ProfilerSection::RENDER_EDGES);
+            navGraph.renderEdges();
+        }
+
+        // E & F. Draw Dijkstra Step-by-Step Search State & Emerald Shortest Path
+        {
+            ProfileScope p(ProfilerSection::RENDER_DIJKSTRA);
+            if (dijkstra.isPlaying() || !dijkstra.isFinished()) {
+                GraphRenderer3D::drawSearchState(dijkstra.getCurrentSnapshot(), navGraph.getVertices(), sceneTime);
             }
-
-            // E. Phase 4: Draw Dijkstra Step-by-Step Search State (Current Node u, Examining Cyan Beam, Visited Nodes)
-            GraphRenderer3D::drawSearchState(dijkstra.getCurrentSnapshot(), navGraph.getVertices(), sceneTime);
-
-            // F. Phase 4: Draw Brilliant Glowing Emerald Shortest Path along Terrain Surface
             GraphRenderer3D::drawShortestPath(dijkstra.getShortestPathNodes(), sceneTime);
 
             // Standoff Vantage Conduit: If goal is physically blocked, draw laser line-of-sight from standoff node to goal
@@ -724,72 +757,43 @@ int main() {
                 Color homingCol = ColorAlpha(Color{ 255, 90, 30, 255 }, 0.7f + 0.3f * pulse);
                 DrawLine3D(Vector3Add(roverPos, Vector3{ 0, 0.8f, 0 }), Vector3Add(goalPos, Vector3{ 0, 1.2f, 0 }), homingCol);
             }
+        }
 
-            // G. Draw Draped NavGraph Nodes (Prominent Glowing 3D Spheres with Distance LOD Culling)
-            if (showNodes) {
-                Vector3 camPos = activeCamera.position;
-                for (const Vertex3D* v : navGraph.getVertices()) {
-                    if (v == navGraph.getStartNode() || v == navGraph.getEndNode()) {
-                        continue; // Drawn prominently below
-                    }
+        // G. Draw GPU-Batched Draped NavGraph Nodes (Instantaneous single draw call)
+        if (showNodes) {
+            ProfileScope p(ProfilerSection::RENDER_NODES);
+            navGraph.renderNodes();
 
-                    float distToCam = Vector3Distance(camPos, v->position);
-                    if (distToCam > 175.0f) {
-                        continue; // Skip rendering distant nodes
-                    }
-
-                    float surfY = v->position.y - 0.40f;
-                    Vector3 baseAnchor = { v->position.x, surfY + 0.05f, v->position.z };
-
-                    if (v->state == NodeState::IMPASSABLE) {
-                        // Prominent Hazard Node on steep slopes / cliffs / boulder hazards
-                        DrawSphere(v->position, 0.75f, Color{ 235, 65, 50, 220 });
-                        DrawLine3D(baseAnchor, v->position, ColorAlpha(Color{ 235, 65, 50, 255 }, 0.70f));
-                        if (distToCam < 90.0f) {
-                            DrawSphereWires(v->position, 0.95f, 4, 4, ColorAlpha(RED, 0.50f));
-                            DrawCircle3D(baseAnchor, 0.45f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(RED, 0.40f));
-                        }
-                        continue;
-                    }
-
-                    Color nodeCol = GraphRenderer3D::getNodeColor(v->state);
-                    float r = 0.85f; // Prominently visible from panoramic orbit camera!
-                    DrawSphere(v->position, r, nodeCol);
-                    DrawLine3D(baseAnchor, v->position, ColorAlpha(nodeCol, 0.75f));
-                    if (distToCam < 95.0f) {
-                        DrawSphereWires(v->position, r * 1.25f, 6, 6, ColorAlpha(nodeCol, 0.60f));
-                        DrawCircle3D(baseAnchor, 0.50f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(nodeCol, 0.45f));
-                    }
-                }
-
-                // Prominent START Beacon with 26m vertical laser beam and pulsating radar ground rings
-                if (const Vertex3D* s = navGraph.getStartNode()) {
-                    float sSurfY = terrain.getHeight(s->position.x, s->position.z);
-                    Vector3 sBase = { s->position.x, sSurfY + 0.05f, s->position.z };
-                    Vector3 pillarTop = Vector3Add(s->position, Vector3{ 0.0f, 26.0f, 0.0f });
-                    DrawCylinderEx(sBase, pillarTop, 0.40f, 0.05f, 10, ColorAlpha(Color{ 46, 230, 113, 255 }, 0.85f));
-                    DrawSphere(s->position, 1.8f, Color{ 46, 230, 113, 255 });
-                    DrawSphereWires(s->position, 2.3f, 8, 8, WHITE);
-                    float pulseR = 3.5f + sinf(sceneTime * 4.0f) * 0.8f;
-                    DrawCircle3D(sBase, pulseR, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 46, 230, 113, 255 }, 0.75f));
-                    DrawCircle3D(sBase, pulseR * 1.5f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 46, 230, 113, 255 }, 0.35f));
-                }
-
-                // Prominent END Beacon with 26m vertical laser beam and pulsating radar ground rings
-                if (const Vertex3D* e = navGraph.getEndNode()) {
-                    float eSurfY = terrain.getHeight(e->position.x, e->position.z);
-                    Vector3 eBase = { e->position.x, eSurfY + 0.05f, e->position.z };
-                    Vector3 pillarTop = Vector3Add(e->position, Vector3{ 0.0f, 26.0f, 0.0f });
-                    DrawCylinderEx(eBase, pillarTop, 0.40f, 0.05f, 10, ColorAlpha(Color{ 235, 60, 60, 255 }, 0.85f));
-                    DrawSphere(e->position, 1.8f, Color{ 235, 60, 60, 255 });
-                    DrawSphereWires(e->position, 2.3f, 8, 8, WHITE);
-                    float pulseR = 3.5f + sinf(sceneTime * 4.0f + 1.5f) * 0.8f;
-                    DrawCircle3D(eBase, pulseR, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 235, 60, 60, 255 }, 0.75f));
-                    DrawCircle3D(eBase, pulseR * 1.5f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 235, 60, 60, 255 }, 0.35f));
-                }
+            // Prominent START Beacon with 26m vertical laser beam and pulsating radar ground rings
+            if (const Vertex3D* s = navGraph.getStartNode()) {
+                float sSurfY = terrain.getHeight(s->position.x, s->position.z);
+                Vector3 sBase = { s->position.x, sSurfY + 0.05f, s->position.z };
+                Vector3 pillarTop = Vector3Add(s->position, Vector3{ 0.0f, 26.0f, 0.0f });
+                DrawCylinderEx(sBase, pillarTop, 0.40f, 0.05f, 10, ColorAlpha(Color{ 46, 230, 113, 255 }, 0.85f));
+                DrawSphere(s->position, 1.8f, Color{ 46, 230, 113, 255 });
+                DrawSphereWires(s->position, 2.3f, 8, 8, WHITE);
+                float pulseR = 3.5f + sinf(sceneTime * 4.0f) * 0.8f;
+                DrawCircle3D(sBase, pulseR, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 46, 230, 113, 255 }, 0.75f));
+                DrawCircle3D(sBase, pulseR * 1.5f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 46, 230, 113, 255 }, 0.35f));
             }
 
-            // H. Phase 5: Autonomous Planetary Rover Physical Rig & 3D Model
+            // Prominent END Beacon with 26m vertical laser beam and pulsating radar ground rings
+            if (const Vertex3D* e = navGraph.getEndNode()) {
+                float eSurfY = terrain.getHeight(e->position.x, e->position.z);
+                Vector3 eBase = { e->position.x, eSurfY + 0.05f, e->position.z };
+                Vector3 pillarTop = Vector3Add(e->position, Vector3{ 0.0f, 26.0f, 0.0f });
+                DrawCylinderEx(eBase, pillarTop, 0.40f, 0.05f, 10, ColorAlpha(Color{ 235, 60, 60, 255 }, 0.85f));
+                DrawSphere(e->position, 1.8f, Color{ 235, 60, 60, 255 });
+                DrawSphereWires(e->position, 2.3f, 8, 8, WHITE);
+                float pulseR = 3.5f + sinf(sceneTime * 4.0f + 1.5f) * 0.8f;
+                DrawCircle3D(eBase, pulseR, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 235, 60, 60, 255 }, 0.75f));
+                DrawCircle3D(eBase, pulseR * 1.5f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 235, 60, 60, 255 }, 0.35f));
+            }
+        }
+
+        // H. Phase 5: Autonomous Planetary Rover Physical Rig & 3D Model
+        {
+            ProfileScope p(ProfilerSection::RENDER_ROVER);
             rover.render(sceneTime);
 
             // I. Draw Dynamic Rolling Test Spheres (Synchronized with Jolt Physics rigid bodies)
@@ -807,13 +811,17 @@ int main() {
                 DrawCircle3D(hoveredNode->position, 2.2f, Vector3{ 0.0f, 1.0f, 0.0f }, 90.0f, ColorAlpha(YELLOW, 0.8f));
             }
         }
-        EndMode3D();
+    }
+    EndMode3D();
 
-        // 2D HUD & Mission Control Overlay
+    // 2D HUD & Mission Control Overlay
+    {
+        ProfileScope p(ProfilerSection::RENDER_HUD);
+        int screenW = GetScreenWidth();
+        int screenH = GetScreenHeight();
+        Vector2 mousePos = GetMousePosition();
+
         if (showHUD) {
-            int screenW = GetScreenWidth();
-            int screenH = GetScreenHeight();
-            Vector2 mousePos = GetMousePosition();
 
             bool togglePreset = false;
             bool toggleInf = false;
@@ -852,18 +860,30 @@ int main() {
                 showHUD = true;
             }
         }
-
-        EndDrawing();
-
-        static int s_frameCounter = 0;
-        s_frameCounter++;
-        const char* screenshotPath = getenv("ROVER_SCREENSHOT_PATH");
-        const char* frameTarget = getenv("ROVER_SCREENSHOT_FRAMES");
-        if (screenshotPath && frameTarget && s_frameCounter == atoi(frameTarget)) {
-            TakeScreenshot(screenshotPath);
-            break;
-        }
     }
+
+    {
+        ProfileScope p(ProfilerSection::GL_SWAP_BUFFERS);
+        EndDrawing();
+    }
+
+    FrameProfiler::instance().endFrame();
+
+    static int s_frameCounter = 0;
+    s_frameCounter++;
+    const char* screenshotPath = getenv("ROVER_SCREENSHOT_PATH");
+    const char* frameTarget = getenv("ROVER_SCREENSHOT_FRAMES");
+    const char* profileTarget = getenv("ROVER_PROFILE_FRAMES");
+    if (screenshotPath && frameTarget && s_frameCounter == atoi(frameTarget)) {
+        TakeScreenshot(screenshotPath);
+        break;
+    }
+    if (profileTarget && s_frameCounter >= atoi(profileTarget)) {
+        break;
+    }
+}
+
+FrameProfiler::instance().finishAndDumpSummary();
 
     // Cleanup & Exit
     chunkMgr.clear(physics);
