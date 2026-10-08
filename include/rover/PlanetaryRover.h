@@ -10,9 +10,10 @@ class PhysicsWorld;
 struct Vertex3D;
 
 enum class RoverCameraMode {
-    ORBIT,
+    TOP_DOWN,
     CHASE,
-    MAST
+    MAST,
+    ORBIT
 };
 
 struct WheelState {
@@ -75,6 +76,10 @@ public:
     void setCameraMode(RoverCameraMode mode) { m_cameraMode = mode; }
     RoverCameraMode getCameraMode() const { return m_cameraMode; }
     Camera3D getCamera(const Camera3D& orbitCamera) const;
+    void adjustTopDownZoom(float wheelDelta) {
+        m_topDownZoom = Clamp(m_topDownZoom - wheelDelta * 3.5f, 15.0f, 55.0f);
+    }
+    float getTopDownZoom() const { return m_topDownZoom; }
 
     // Vehicle Telemetry Accessors
     Vector3 getPosition() const { return m_position; }
@@ -211,4 +216,8 @@ private:
     RoverCameraMode m_cameraMode;
     mutable Vector3 m_chaseCamPos;
     mutable Vector3 m_chaseCamTarget;
+    mutable Vector3 m_topDownCamPos;
+    mutable Vector3 m_topDownCamTarget;
+    mutable Vector3 m_topDownUp;
+    mutable float m_topDownZoom;
 };

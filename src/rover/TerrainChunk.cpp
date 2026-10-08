@@ -32,7 +32,7 @@ TerrainChunk::TerrainChunk(int cx, int cz)
 TerrainChunk::~TerrainChunk() {
 }
 
-void TerrainChunk::generate(const TerrainHeightfield& generator, PhysicsWorld& physics, Texture2D sharedTexture) {
+void TerrainChunk::generate(const TerrainHeightfield& generator, Texture2D sharedTexture) {
     if (m_isLoaded) return;
 
     m_originX = m_chunkX * CHUNK_SIZE;
@@ -111,7 +111,13 @@ void TerrainChunk::generate(const TerrainHeightfield& generator, PhysicsWorld& p
     m_model = LoadModelFromMesh(m_mesh);
     m_model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = sharedTexture;
 
-    // 4. Jolt Physics HeightField Collider
+    m_isLoaded = true;
+}
+
+void TerrainChunk::ensurePhysics(PhysicsWorld& physics, const TerrainHeightfield& generator) {
+    if (!m_isLoaded || !m_physicsBodyId.IsInvalid()) return;
+
+    // Jolt Physics HeightField Collider
     m_physicsBodyId = physics.createChunkHeightField(
         m_heightData.data(),
         CHUNK_RESOLUTION,
@@ -119,23 +125,17 @@ void TerrainChunk::generate(const TerrainHeightfield& generator, PhysicsWorld& p
         Vector3{ m_originX, 0.0f, m_originZ }
     );
 
-    // 5. Deterministic Procedural Boulder Placement
-    // Each chunk deterministically generates 1 to 3 boulders based on coordinate hash
-    uint32_t seed = chunkHash(m_chunkX, m_chunkZ, 1337);
-    int numBoulders = 1 + (seed % 3);
+    // Sparse Scenery Boulder Placement for Driving Simulator
+    if (m_boulderBodyIds.empty()) {
+        uint32_t seed = chunkHash(m_chunkX, m_chunkZ, 1337);
+        if ((seed % 7) == 0 && (std::abs(m_chunkX) > 0 || std::abs(m_chunkZ) > 0)) {
+            uint32_t bh = chunkHash(m_chunkX, m_chunkZ, seed + 997);
+            float bx = m_originX + 12.0f + hashToFloat(bh) * (CHUNK_SIZE - 24.0f);
+            uint32_t bzHash = chunkHash(m_chunkX, m_chunkZ, bh + 12345);
+            float bz = m_originZ + 12.0f + hashToFloat(bzHash) * (CHUNK_SIZE - 24.0f);
+            float by = generator.getHeight(bx, bz);
 
-    for (int b = 0; b < numBoulders; ++b) {
-        uint32_t bh = chunkHash(m_chunkX, m_chunkZ, seed + b * 997);
-        float bx = m_originX + 8.0f + hashToFloat(bh) * (CHUNK_SIZE - 16.0f);
-        uint32_t bzHash = chunkHash(m_chunkX, m_chunkZ, bh + 12345);
-        float bz = m_originZ + 8.0f + hashToFloat(bzHash) * (CHUNK_SIZE - 16.0f);
-        float by = generator.getHeight(bx, bz);
-
-        float radius = 1.8f + hashToFloat(bh ^ bzHash) * 1.6f;
-        float slope = generator.getSlopeAngleRad(bx, bz);
-
-        // Only spawn boulders on reasonably flat or rolling ground (< 20 deg)
-        if (slope < 20.0f * DEG2RAD) {
+            float radius = 1.0f + hashToFloat(bh ^ bzHash) * 0.8f;
             Vector3 bPos = { bx, by + radius * 0.70f, bz };
             JPH::BodyID bId = physics.spawnBoulder(bPos, radius);
             if (!bId.IsInvalid()) {
@@ -143,13 +143,9 @@ void TerrainChunk::generate(const TerrainHeightfield& generator, PhysicsWorld& p
             }
         }
     }
-
-    m_isLoaded = true;
 }
 
-void TerrainChunk::unload(PhysicsWorld& physics) {
-    if (!m_isLoaded) return;
-
+void TerrainChunk::removePhysics(PhysicsWorld& physics) {
     if (!m_physicsBodyId.IsInvalid()) {
         physics.removeChunkHeightField(m_physicsBodyId);
         m_physicsBodyId = JPH::BodyID();
@@ -159,6 +155,12 @@ void TerrainChunk::unload(PhysicsWorld& physics) {
         physics.removeBoulder(bId);
     }
     m_boulderBodyIds.clear();
+}
+
+void TerrainChunk::unload(PhysicsWorld& physics) {
+    if (!m_isLoaded) return;
+
+    removePhysics(physics);
 
     UnloadModel(m_model);
     m_isLoaded = false;

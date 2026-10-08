@@ -20,7 +20,7 @@ inline Vector3 rotateVectorAroundAxis(Vector3 v, Vector3 axis, float angleRad) {
 
 class OrbitCameraController {
 public:
-    OrbitCameraController(Vector3 position = { 0.0f, 30.0f, 40.0f },
+    OrbitCameraController(Vector3 position = { 0.0f, 40.0f, 25.0f },
                           Vector3 target = { 0.0f, 0.0f, 0.0f },
                           float fovy = 45.0f)
     {
@@ -38,6 +38,7 @@ public:
         float wheel = GetMouseWheelMove();
 
         // 1. Zoom to Mouse Cursor (zooms directly into any terrain point under cursor)
+        // Hard-locked between 4.0m (close inspection) and 75.0m (elevated scenic overview)
         if (wheel != 0.0f) {
             Vector3 camToTarget = Vector3Subtract(m_camera.target, m_camera.position);
             float dist = Vector3Length(camToTarget);
@@ -60,54 +61,45 @@ public:
 
                 // Smooth exponential zoom factor based on wheel delta
                 float zoomFactor = powf(0.85f, wheel);
-                zoomFactor = Clamp(zoomFactor, 0.3f, 3.0f);
-                float newDist = dist * zoomFactor;
+                zoomFactor = Clamp(zoomFactor, 0.4f, 2.5f);
+                float newDist = Clamp(dist * zoomFactor, 4.0f, 75.0f);
+                float actualScale = newDist / dist;
 
-                if (newDist >= 3.0f && newDist <= 600.0f) {
-                    m_camera.position = Vector3Add(focusPoint, Vector3Scale(Vector3Subtract(m_camera.position, focusPoint), zoomFactor));
-                    m_camera.target   = Vector3Add(focusPoint, Vector3Scale(Vector3Subtract(m_camera.target, focusPoint), zoomFactor));
+                m_camera.position = Vector3Add(focusPoint, Vector3Scale(Vector3Subtract(m_camera.position, focusPoint), actualScale));
+                m_camera.target   = Vector3Add(focusPoint, Vector3Scale(Vector3Subtract(m_camera.target, focusPoint), actualScale));
 
-                    // Keep camera safely above target height
-                    if (m_camera.position.y < m_camera.target.y + 0.8f) {
-                        m_camera.position.y = m_camera.target.y + 0.8f;
-                    }
+                // Keep camera safely above target height
+                if (m_camera.position.y < m_camera.target.y + 0.8f) {
+                    m_camera.position.y = m_camera.target.y + 0.8f;
                 }
             }
         }
 
-        // 2. Pan / Globe Surface Rotation:
+        // 2. Pan / Ground Surface Translation:
         // Triggered by Middle-click drag, Shift+RMB drag, or Left-drag across terrain
         bool isPanning = IsMouseButtonDown(MOUSE_BUTTON_MIDDLE) || 
                          (IsKeyDown(KEY_LEFT_SHIFT) && IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) ||
                          isDraggingLeft;
 
         if (isPanning && (fabsf(mouseDelta.x) > 0.001f || fabsf(mouseDelta.y) > 0.001f)) {
-            Vector3 forward = Vector3Normalize(Vector3Subtract(m_camera.target, m_camera.position));
-            Vector3 right = Vector3Normalize(Vector3CrossProduct(forward, m_camera.up));
-
-            // Planet sphere center at (0, -R, 0)
-            const Vector3 planetCenter = { 0.0f, -1400.0f, 0.0f };
-            Vector3 toTarget = Vector3Subtract(m_camera.target, planetCenter);
-            Vector3 toPos = Vector3Subtract(m_camera.position, planetCenter);
+            Vector3 forward = Vector3Subtract(m_camera.target, m_camera.position);
+            forward.y = 0.0f;
+            if (Vector3LengthSqr(forward) < 0.001f) forward = Vector3{ 0.0f, 0.0f, -1.0f };
+            forward = Vector3Normalize(forward);
+            Vector3 right = Vector3Normalize(Vector3CrossProduct(forward, Vector3{ 0.0f, 1.0f, 0.0f }));
 
             float dist = Vector3Distance(m_camera.position, m_camera.target);
-            float rotSpeed = 0.0018f * Clamp(dist / 40.0f, 0.4f, 2.5f);
+            float panSpeed = 0.0015f * dist;
 
-            float dYaw = -mouseDelta.x * rotSpeed;
-            float dPitch = -mouseDelta.y * rotSpeed;
+            Vector3 translation = Vector3Add(
+                Vector3Scale(right, -mouseDelta.x * panSpeed),
+                Vector3Scale(forward, mouseDelta.y * panSpeed)
+            );
 
-            // 1. Rotate around planet vertical axis (world Y)
-            toTarget = rotateVectorAroundAxis(toTarget, Vector3{ 0.0f, 1.0f, 0.0f }, dYaw);
-            toPos = rotateVectorAroundAxis(toPos, Vector3{ 0.0f, 1.0f, 0.0f }, dYaw);
+            Vector3 newTarget = Vector3Add(m_camera.target, translation);
+            Vector3 newPos = Vector3Add(m_camera.position, translation);
 
-            // 2. Rotate around camera right axis (rolling over spherical horizon)
-            toTarget = rotateVectorAroundAxis(toTarget, right, dPitch);
-            toPos = rotateVectorAroundAxis(toPos, right, dPitch);
-
-            Vector3 newTarget = Vector3Add(planetCenter, toTarget);
-            Vector3 newPos = Vector3Add(planetCenter, toPos);
-
-            // 3. Anchor target strictly to terrain elevation
+            // Anchor target to terrain elevation
             if (getHeightFunc) {
                 float terrainY = getHeightFunc(newTarget.x, newTarget.z);
                 float deltaY = terrainY - newTarget.y;
@@ -127,6 +119,7 @@ public:
             Vector3 toCamera = Vector3Subtract(m_camera.position, m_camera.target);
             float radius = Vector3Length(toCamera);
             if (radius > 0.001f) {
+                radius = Clamp(radius, 4.0f, 75.0f);
                 float yaw = atan2f(toCamera.x, toCamera.z);
                 float pitch = asinf(Clamp(toCamera.y / radius, -0.999f, 0.999f));
 
@@ -134,8 +127,8 @@ public:
                 yaw -= mouseDelta.x * rotSpeed;
                 pitch -= mouseDelta.y * rotSpeed;
 
-                // Clamp pitch between ~2.5 deg and ~88 deg so camera stays above terrain plane
-                const float minPitch = 0.045f;           // ~2.5 degrees above horizontal plane
+                // Elevated pitch clamp between ~20 deg and ~88 deg prevents grazing angle into unrendered horizon
+                const float minPitch = 20.0f * DEG2RAD;  // ~20 degrees above horizontal plane
                 const float maxPitch = 88.0f * DEG2RAD;  // ~88 degrees overhead
                 pitch = Clamp(pitch, minPitch, maxPitch);
 
@@ -156,19 +149,17 @@ public:
     Camera3D& getCamera() { return m_camera; }
     const Camera3D& getCamera() const { return m_camera; }
 
-    void focusOn(Vector3 newTarget, float distance = 25.0f) {
-        Vector3 toCam = Vector3Subtract(m_camera.position, m_camera.target);
-        Vector3 viewDir = Vector3Normalize(toCam);
-        if (Vector3Length(viewDir) < 0.1f) viewDir = Vector3{ 0.0f, 0.6f, 0.8f };
-
+    void focusOn(Vector3 newTarget, float distance = 30.0f) {
+        distance = Clamp(distance, 4.0f, 75.0f);
+        Vector3 viewDir = Vector3Normalize(Vector3{ 0.0f, 0.85f, 0.53f }); // ~58 deg high-angle overview
         m_camera.target = newTarget;
         m_camera.position = Vector3Add(newTarget, Vector3Scale(viewDir, distance));
-        if (m_camera.position.y < m_camera.target.y + 1.0f) {
-            m_camera.position.y = m_camera.target.y + 1.0f;
+        if (m_camera.position.y < m_camera.target.y + 1.5f) {
+            m_camera.position.y = m_camera.target.y + 1.5f;
         }
     }
 
-    void reset(Vector3 position = { 0.0f, 65.0f, 100.0f }, Vector3 target = { 0.0f, 0.0f, 0.0f }) {
+    void reset(Vector3 position = { 0.0f, 40.0f, 25.0f }, Vector3 target = { 0.0f, 0.0f, 0.0f }) {
         m_camera.position = position;
         m_camera.target = target;
         m_camera.up = Vector3{ 0.0f, 1.0f, 0.0f };

@@ -63,32 +63,20 @@ void TerrainHeightfield::setPreset(TerrainPreset preset) {
 
 const char* TerrainHeightfield::getPresetName() const {
     switch (m_preset) {
-        case TerrainPreset::OLYMPUS_CRATER:   return "The Olympus Crater [Mars]";
-        case TerrainPreset::SCREE_SLOPE:      return "Lunar Scree Slope [Moon]";
-        case TerrainPreset::BOULDER_SLALOM:   return "Martian Canyon Slalom [Mars]";
-        case TerrainPreset::ACIDALIA_PLANITIA: return "Terrestrial Proving Ground [Earth]";
+        case TerrainPreset::OLYMPUS_CRATER:   return "Valley Circuit & Rolling Hills";
+        case TerrainPreset::SCREE_SLOPE:      return "Alpine Mountain Pass";
+        case TerrainPreset::BOULDER_SLALOM:   return "Rally Canyon & Rhythm Slalom";
+        case TerrainPreset::ACIDALIA_PLANITIA: return "Velodrome Bowl & Desert Dunes";
         default: return "Unknown";
     }
 }
 
 float TerrainHeightfield::getPresetGravity() const {
-    switch (m_preset) {
-        case TerrainPreset::OLYMPUS_CRATER:   return -3.71f; // Martian Gravity
-        case TerrainPreset::SCREE_SLOPE:      return -1.62f; // Lunar Gravity
-        case TerrainPreset::BOULDER_SLALOM:   return -3.71f; // Martian Gravity
-        case TerrainPreset::ACIDALIA_PLANITIA: return -9.81f; // Earth Gravity
-        default: return -3.71f;
-    }
+    return -9.81f; // Standard Earth gravity for driving simulator
 }
 
 const char* TerrainHeightfield::getEnvironmentName() const {
-    switch (m_preset) {
-        case TerrainPreset::OLYMPUS_CRATER:   return "Mars (g = 3.71 m/s²)";
-        case TerrainPreset::SCREE_SLOPE:      return "Moon (g = 1.62 m/s²)";
-        case TerrainPreset::BOULDER_SLALOM:   return "Mars (g = 3.71 m/s²)";
-        case TerrainPreset::ACIDALIA_PLANITIA: return "Earth (g = 9.81 m/s²)";
-        default: return "Mars (g = 3.71 m/s²)";
-    }
+    return "Earth Proving Ground (g = 9.81 m/s²)";
 }
 
 void TerrainHeightfield::cyclePreset() {
@@ -98,48 +86,6 @@ void TerrainHeightfield::cyclePreset() {
 
 void TerrainHeightfield::configureCratersForPreset() {
     m_craters.clear();
-
-    if (m_preset == TerrainPreset::OLYMPUS_CRATER) {
-        // Primary crater: prominent impact basin with raised rim wall
-        m_craters.push_back({
-            Vector2{ 20.0f, -10.0f },
-            32.0f,
-            9.0f,
-            4.0f,
-            5.5f
-        });
-        m_craters.push_back({
-            Vector2{ -45.0f, 35.0f },
-            20.0f,
-            5.5f,
-            2.8f,
-            4.0f
-        });
-        m_craters.push_back({
-            Vector2{ -20.0f, -40.0f },
-            16.0f,
-            3.5f,
-            1.8f,
-            3.2f
-        });
-    } else if (m_preset == TerrainPreset::SCREE_SLOPE) {
-        m_craters.push_back({
-            Vector2{ -35.0f, -25.0f },
-            18.0f,
-            4.5f,
-            2.0f,
-            3.5f
-        });
-    } else if (m_preset == TerrainPreset::BOULDER_SLALOM) {
-        m_craters.push_back({
-            Vector2{ 50.0f, 40.0f },
-            18.0f,
-            5.0f,
-            2.5f,
-            3.5f
-        });
-    }
-    // ACIDALIA_PLANITIA has 0 craters (pure rolling dune plains)
 }
 
 void TerrainHeightfield::unload() {
@@ -181,80 +127,46 @@ float TerrainHeightfield::evaluateRawHeight(float x, float z) const {
     float height = 0.0f;
 
     if (m_preset == TerrainPreset::OLYMPUS_CRATER) {
-        // Fractal Brownian Motion (fBm)
-        float baseAmp = 12.0f;
-        float baseFreq = 0.012f;
-        float persistence = 0.5f;
+        // Valley Circuit & Rolling Hills:
+        // Broad sweeping hills with crest jumps and a natural banked raceway corridor
+        float hills = samplePerlin(x * 0.007f, z * 0.007f) * 7.5f;
+        float subWaves = samplePerlin((x + 120.0f) * 0.015f, (z + 80.0f) * 0.015f) * 3.2f;
 
-        for (int i = 0; i < 4; ++i) {
-            float freq = baseFreq * (1 << i);
-            float amp = baseAmp * powf(persistence, static_cast<float>(i));
-            height += amp * samplePerlin(x * freq, z * freq);
-        }
+        // Winding natural raceway corridor: track center oscillates smoothly
+        float trackX = sinf(z * 0.012f) * 45.0f;
+        float distToTrack = fabsf(x - trackX);
+        float trackFactor = Clamp(distToTrack / 30.0f, 0.0f, 1.0f);
 
-        // Martian Impact Crater Displacements
-        for (const auto& c : m_craters) {
-            float dx = x - c.center.x;
-            float dz = z - c.center.y;
-            float r = sqrtf(dx * dx + dz * dz);
+        // Valley road bed is smooth, with banked turns on the outside of bends
+        float valleyDip = -3.2f * (1.0f - trackFactor);
+        float curvature = -cosf(z * 0.012f) * 0.012f;
+        float banking = (x - trackX) * curvature * 3.0f * (1.0f - trackFactor);
 
-            if (r <= 1.5f * c.radius) {
-                float normR = r / c.radius;
-                float bowl = -c.depth * std::max(0.0f, 1.0f - normR * normR);
-                float rimDiff = r - c.radius;
-                float rim = c.rimHeight * expf(-(rimDiff * rimDiff) / (2.0f * c.rimWidth * c.rimWidth));
-                height += (bowl + rim);
-            }
-        }
+        height = (hills + subWaves) * (0.35f + 0.65f * trackFactor) + valleyDip + banking;
     } else if (m_preset == TerrainPreset::SCREE_SLOPE) {
-        // High-grade mountain slope with stepped terracing and loose scree
-        height += (x * 0.15f + z * 0.08f);
-        height += sinf(x * 0.055f) * 3.8f + cosf(z * 0.045f) * 2.2f;
-        height += samplePerlin(x * 0.035f, z * 0.035f) * 3.5f;
-        height += samplePerlin(x * 0.09f, z * 0.09f) * 1.0f;
-
-        for (const auto& c : m_craters) {
-            float dx = x - c.center.x;
-            float dz = z - c.center.y;
-            float r = sqrtf(dx * dx + dz * dz);
-            if (r <= 1.5f * c.radius) {
-                float normR = r / c.radius;
-                float bowl = -c.depth * std::max(0.0f, 1.0f - normR * normR);
-                float rimDiff = r - c.radius;
-                float rim = c.rimHeight * expf(-(rimDiff * rimDiff) / (2.0f * c.rimWidth * c.rimWidth));
-                height += (bowl + rim);
-            }
-        }
+        // Alpine Mountain Pass & Terraced Ridges:
+        // Panoramic mountain pass ascent with sweeping terrace benches
+        float passAscent = sinf(z * 0.006f) * 12.0f + cosf(x * 0.007f) * 7.0f;
+        float terraceBenches = samplePerlin(x * 0.009f, z * 0.009f) * 4.8f;
+        float smoothRollers = sinf(x * 0.022f + z * 0.016f) * 1.6f;
+        height = passAscent + terraceBenches + smoothRollers;
     } else if (m_preset == TerrainPreset::BOULDER_SLALOM) {
-        // Winding Martian Canyon Corridor with sheer wall flanks
-        float canyonCenter = sinf(z * 0.032f) * 32.0f;
-        float distFromCanyon = fabsf(x - canyonCenter);
-
-        float canyonDepression = -8.0f * (1.0f - Clamp(distFromCanyon / 34.0f, 0.0f, 1.0f));
-        float wallFactor = Clamp((distFromCanyon - 16.0f) / 28.0f, 0.0f, 1.0f);
-        float canyonWalls = wallFactor * wallFactor * 16.0f;
-
-        height += (canyonDepression + canyonWalls);
-        height += samplePerlin(x * 0.018f, z * 0.018f) * 2.8f;
+        // Rally Canyon & Rhythm Slalom:
+        // S-curve canyon valley with gentle rhythm waves for dynamic suspension feedback
+        float canyonCenter = sinf(z * 0.016f) * 36.0f;
+        float distFromCenter = fabsf(x - canyonCenter);
+        float valley = -5.5f * (1.0f - Clamp(distFromCenter / 38.0f, 0.0f, 1.0f));
+        float rhythmWaves = sinf(z * 0.055f) * 1.5f * (1.0f - Clamp(distFromCenter / 24.0f, 0.0f, 1.0f));
+        float canyonFlanks = samplePerlin(x * 0.008f, z * 0.008f) * 5.2f;
+        height = valley + rhythmWaves + canyonFlanks;
     } else { // ACIDALIA_PLANITIA
-        // Smooth flowing low-gradient sand dunes (fast rover cruising)
-        float baseFreq = 0.007f;
-        height += samplePerlin(x * baseFreq, z * baseFreq) * 5.2f;
-        height += sinf((x * 0.7f + z * 0.3f) * 0.04f) * 1.5f;
-        height += samplePerlin(x * 0.02f, z * 0.02f) * 0.8f;
+        // Velodrome Bowl & Desert Dunes:
+        // Expansive gentle dunes with a huge banked outer bowl for flat-out top speed
+        float dunes = samplePerlin(x * 0.005f, z * 0.005f) * 4.2f;
+        float bowlCurve = ((x * x + z * z) / 220000.0f) * 6.5f;
+        float subtleRollers = sinf(x * 0.018f + z * 0.018f) * 1.0f;
+        height = dunes + Clamp(bowlCurve, 0.0f, 8.5f) + subtleRollers;
     }
-
-    // Planetary Spherical Globe Curvature (Mars Planetary Body Radius R ~ 1400m)
-    // Curvature equation: y = -(R - sqrt(max(0, R^2 - (x^2 + z^2))))
-    const float planetRadius = 1400.0f;
-    float distSq = x * x + z * z;
-    float globeDrop = 0.0f;
-    if (distSq < planetRadius * planetRadius) {
-        globeDrop = planetRadius - sqrtf(planetRadius * planetRadius - distSq);
-    } else {
-        globeDrop = planetRadius + (sqrtf(distSq) - planetRadius) * 1.5f;
-    }
-    height -= globeDrop;
 
     return height;
 }
@@ -273,13 +185,13 @@ void TerrainHeightfield::generate() {
         }
     }
 
-    // 2. Construct Circular Planetary Globe Mesh (Diameter = 1,440m with 360-degree curved horizon)
-    const int numRings = 96;
-    const int numSectors = 96; // 3.75 degrees per sector for ultra-smooth topography
-    const float horizonRadius = 720.0f;
+    // 2. Construct Planar Square Grid Mesh for Flat World
+    const int gridRes = 96;
+    float cellSpacing = m_size / (gridRes - 1);
 
-    int numVertices = 1 + numRings * numSectors;
-    int numTriangles = numSectors + (numRings - 1) * numSectors * 2;
+    int numVertices = gridRes * gridRes;
+    int numQuads = (gridRes - 1) * (gridRes - 1);
+    int numTriangles = numQuads * 2;
 
     Mesh mesh = {};
     mesh.vertexCount = numVertices;
@@ -291,45 +203,12 @@ void TerrainHeightfield::generate() {
     mesh.colors = static_cast<unsigned char*>(MemAlloc(numVertices * 4 * sizeof(unsigned char)));
     mesh.indices = static_cast<unsigned short*>(MemAlloc(numTriangles * 3 * sizeof(unsigned short)));
 
-    // Vertex 0: Planetary Zenith Center (0, Y, 0)
-    float centerY = evaluateRawHeight(0.0f, 0.0f);
-    mesh.vertices[0] = 0.0f;
-    mesh.vertices[1] = centerY;
-    mesh.vertices[2] = 0.0f;
-
-    Vector3 centerNorm = getNormal(0.0f, 0.0f);
-    mesh.normals[0] = centerNorm.x;
-    mesh.normals[1] = centerNorm.y;
-    mesh.normals[2] = centerNorm.z;
-
-    mesh.texcoords[0] = 0.0f;
-    mesh.texcoords[1] = 0.0f;
-
-    float centerSlope = acosf(Clamp(centerNorm.y, -1.0f, 1.0f));
-    Color centerCol = getSlopeColor(centerSlope, centerNorm);
-    mesh.colors[0] = centerCol.r;
-    mesh.colors[1] = centerCol.g;
-    mesh.colors[2] = centerCol.b;
-    mesh.colors[3] = centerCol.a;
-
-    // Concentric Globe Rings: Dense near rover (r < 120m), sweeping out to circular planetary horizon (r = 720m)
-    for (int rIdx = 0; rIdx < numRings; ++rIdx) {
-        float u = static_cast<float>(rIdx + 1) / static_cast<float>(numRings);
-        // Non-linear power distribution allocates high polygon density to exploration core
-        float radius = powf(u, 1.25f) * horizonRadius;
-
-        for (int sIdx = 0; sIdx < numSectors; ++sIdx) {
-            int vIdx = 1 + rIdx * numSectors + sIdx;
-            float angle = static_cast<float>(sIdx) * (2.0f * PI / static_cast<float>(numSectors));
-
-            float wx = radius * cosf(angle);
-            float wz = radius * sinf(angle);
+    for (int gz = 0; gz < gridRes; ++gz) {
+        for (int gx = 0; gx < gridRes; ++gx) {
+            int vIdx = gz * gridRes + gx;
+            float wx = -halfPhys + gx * cellSpacing;
+            float wz = -halfPhys + gz * cellSpacing;
             float wy = evaluateRawHeight(wx, wz);
-
-            // Outermost horizon rim skirt curves downward below the horizon line
-            if (rIdx == numRings - 1) {
-                wy -= 36.0f;
-            }
 
             mesh.vertices[vIdx * 3 + 0] = wx;
             mesh.vertices[vIdx * 3 + 1] = wy;
@@ -347,14 +226,6 @@ void TerrainHeightfield::generate() {
             float slopeRad = acosf(Clamp(norm.y, -1.0f, 1.0f));
             Color vertexColor = getSlopeColor(slopeRad, norm);
 
-            // Soft atmospheric darkening near the circular horizon edge
-            if (rIdx >= numRings - 8) {
-                float fade = static_cast<float>(numRings - 1 - rIdx) / 8.0f;
-                vertexColor.r = static_cast<unsigned char>(vertexColor.r * (0.6f + 0.4f * fade));
-                vertexColor.g = static_cast<unsigned char>(vertexColor.g * (0.6f + 0.4f * fade));
-                vertexColor.b = static_cast<unsigned char>(vertexColor.b * (0.6f + 0.4f * fade));
-            }
-
             mesh.colors[vIdx * 4 + 0] = vertexColor.r;
             mesh.colors[vIdx * 4 + 1] = vertexColor.g;
             mesh.colors[vIdx * 4 + 2] = vertexColor.b;
@@ -364,36 +235,22 @@ void TerrainHeightfield::generate() {
 
     // Populate Triangles (CCW Winding)
     int tIdx = 0;
-
-    // 1. Central Fan: Center vertex 0 connected to Ring 0
-    for (int s = 0; s < numSectors; ++s) {
-        int nextS = (s + 1) % numSectors;
-        mesh.indices[tIdx++] = 0;
-        mesh.indices[tIdx++] = static_cast<unsigned short>(1 + nextS);
-        mesh.indices[tIdx++] = static_cast<unsigned short>(1 + s);
-    }
-
-    // 2. Concentric Ring Quad Strips
-    for (int r = 0; r < numRings - 1; ++r) {
-        int currBase = 1 + r * numSectors;
-        int nextBase = 1 + (r + 1) * numSectors;
-
-        for (int s = 0; s < numSectors; ++s) {
-            int nextS = (s + 1) % numSectors;
-            unsigned short v00 = static_cast<unsigned short>(currBase + s);
-            unsigned short v01 = static_cast<unsigned short>(currBase + nextS);
-            unsigned short v10 = static_cast<unsigned short>(nextBase + s);
-            unsigned short v11 = static_cast<unsigned short>(nextBase + nextS);
+    for (int gz = 0; gz < gridRes - 1; ++gz) {
+        for (int gx = 0; gx < gridRes - 1; ++gx) {
+            unsigned short topLeft = static_cast<unsigned short>(gz * gridRes + gx);
+            unsigned short topRight = static_cast<unsigned short>(topLeft + 1);
+            unsigned short bottomLeft = static_cast<unsigned short>((gz + 1) * gridRes + gx);
+            unsigned short bottomRight = static_cast<unsigned short>(bottomLeft + 1);
 
             // Triangle 1
-            mesh.indices[tIdx++] = v00;
-            mesh.indices[tIdx++] = v11;
-            mesh.indices[tIdx++] = v01;
+            mesh.indices[tIdx++] = topLeft;
+            mesh.indices[tIdx++] = bottomLeft;
+            mesh.indices[tIdx++] = topRight;
 
             // Triangle 2
-            mesh.indices[tIdx++] = v00;
-            mesh.indices[tIdx++] = v10;
-            mesh.indices[tIdx++] = v11;
+            mesh.indices[tIdx++] = bottomLeft;
+            mesh.indices[tIdx++] = bottomRight;
+            mesh.indices[tIdx++] = topRight;
         }
     }
 
@@ -401,7 +258,7 @@ void TerrainHeightfield::generate() {
     UploadMesh(&mesh, false);
     m_model = LoadModelFromMesh(mesh);
 
-    // Generate and bind high-resolution procedural Martian detail texture
+    // Generate and bind high-resolution procedural detail texture
     generateSurfaceTexture();
     m_model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = m_texture;
 
@@ -412,7 +269,7 @@ void TerrainHeightfield::generateSurfaceTexture() {
     const int texW = 2048;
     const int texH = 2048;
 
-    Image img = GenImageColor(texW, texH, Color{ 210, 115, 75, 255 });
+    Image img = GenImageColor(texW, texH, Color{ 60, 130, 65, 255 });
     Color* pixels = static_cast<Color*>(img.data);
 
     for (int y = 0; y < texH; ++y) {
@@ -420,62 +277,59 @@ void TerrainHeightfield::generateSurfaceTexture() {
             float u = static_cast<float>(x) / texW;
             float v = static_cast<float>(y) / texH;
 
-            // Multi-octave planetary noise synthesis
             float n1 = samplePerlin(u * 16.0f, v * 16.0f);
             float n2 = samplePerlin(u * 48.0f, v * 48.0f);
             float n3 = samplePerlin(u * 144.0f, v * 144.0f);
-            float n4 = samplePerlin(u * 384.0f, v * 384.0f);
+            float detailGrain = n1 * 0.45f + n2 * 0.35f + n3 * 0.20f;
 
-            // Wind-swept aerodynamic ripples
-            float ripples = sinf(u * 80.0f + n1 * 5.0f + v * 30.0f) * 0.09f;
-            float detailGrain = n1 * 0.40f + n2 * 0.30f + n3 * 0.20f + n4 * 0.10f + ripples;
+            float r = 60.0f, g = 130.0f, b = 65.0f;
 
-            float r = 210.0f;
-            float g = 115.0f;
-            float b = 75.0f;
+            if (m_preset == TerrainPreset::OLYMPUS_CRATER) {
+                // LUSH GRASSLAND CIRCUIT (Vibrant turf with asphalt track veins and dirt margins)
+                float turfBaseG = 135.0f + detailGrain * 35.0f;
+                r = Clamp(55.0f + detailGrain * 25.0f, 35.0f, 105.0f);
+                g = Clamp(turfBaseG, 95.0f, 175.0f);
+                b = Clamp(50.0f + detailGrain * 20.0f, 30.0f, 95.0f);
 
-            if (m_preset == TerrainPreset::SCREE_SLOPE) {
-                // LUNAR HIGHLANDS / MARE PALETTE (Silvery gray regolith + white anorthosite flecks)
-                float baseGray = 175.0f + detailGrain * 50.0f;
-                r = Clamp(baseGray + 5.0f, 110.0f, 240.0f);
-                g = Clamp(baseGray, 110.0f, 235.0f);
-                b = Clamp(baseGray + 10.0f, 115.0f, 245.0f);
+                // Procedural road / raceway strip across texture
+                float trackDist = fabsf(u - 0.5f - sinf(v * 4.0f * PI) * 0.18f);
+                if (trackDist < 0.06f) {
+                    // Asphalt raceway surface
+                    float tarmac = 48.0f + detailGrain * 18.0f;
+                    r = tarmac + 4.0f;
+                    g = tarmac + 5.0f;
+                    b = tarmac + 8.0f;
 
-                // Bright micro-impact ejecta sparkles & dark basalt specks
+                    // Track edge rumble stripe
+                    if (trackDist > 0.052f) {
+                        float curb = sinf(v * 160.0f);
+                        if (curb > 0.0f) { r = 220.0f; g = 50.0f; b = 45.0f; } // Red curb
+                        else { r = 240.0f; g = 240.0f; b = 240.0f; }           // White curb
+                    }
+                }
+            } else if (m_preset == TerrainPreset::SCREE_SLOPE) {
+                // ALPINE MOUNTAIN PASS (Granite stone, slate grey rock, cool moss)
+                float stone = 150.0f + detailGrain * 45.0f;
+                r = Clamp(stone + 5.0f, 95.0f, 215.0f);
+                g = Clamp(stone + 8.0f, 100.0f, 220.0f);
+                b = Clamp(stone + 15.0f, 105.0f, 230.0f);
+
+                // Granite flecks
                 uint32_t pHash = (x * 7919 + y * 65537);
-                if ((pHash & 0x7F) < 3) {
-                    r = 250.0f; g = 252.0f; b = 255.0f; // Bright quartz/anorthosite crystal
-                } else if ((pHash & 0x7F) > 124) {
-                    r *= 0.45f; g *= 0.45f; b *= 0.50f; // Dark ilmenite / basalt grain
-                }
+                if ((pHash & 0x7F) < 4) { r = 240.0f; g = 242.0f; b = 245.0f; }
+                else if ((pHash & 0x7F) > 123) { r = 60.0f; g = 65.0f; b = 70.0f; }
             } else if (m_preset == TerrainPreset::BOULDER_SLALOM) {
-                // MARTIAN CANYON PALETTE (Deep terracotta, banded sedimentary iron oxide strata)
-                float strata = sinf(v * 45.0f + n2 * 6.0f) * 18.0f;
-                r = Clamp(195.0f + detailGrain * 48.0f + strata, 130.0f, 245.0f);
-                g = Clamp(90.0f + detailGrain * 32.0f + strata * 0.5f, 55.0f, 140.0f);
-                b = Clamp(55.0f + detailGrain * 22.0f, 35.0f, 95.0f);
-
-                if (((x * 7919 + y * 65537) & 0x7F) < 4) {
-                    r *= 0.55f; g *= 0.55f; b *= 0.55f;
-                }
-            } else if (m_preset == TerrainPreset::ACIDALIA_PLANITIA) {
-                // EARTH/DESERT PROVING GROUND (Warm golden dunes, desert varnish & fine pebbles)
-                r = Clamp(225.0f + detailGrain * 35.0f, 175.0f, 255.0f);
-                g = Clamp(165.0f + detailGrain * 30.0f, 120.0f, 210.0f);
-                b = Clamp(110.0f + detailGrain * 25.0f, 75.0f, 155.0f);
-
-                if (((x * 7919 + y * 65537) & 0x7F) < 3) {
-                    r = 95.0f; g = 80.0f; b = 70.0f; // Desert varnish pebble
-                }
-            } else {
-                // OLYMPUS CRATER (Rich Martian rust ochre with basalt flecks)
-                r = Clamp(212.0f + detailGrain * 42.0f, 155.0f, 250.0f);
-                g = Clamp(112.0f + detailGrain * 32.0f, 75.0f, 150.0f);
-                b = Clamp(72.0f + detailGrain * 22.0f, 45.0f, 105.0f);
-
-                if (((x * 7919 + y * 65537) & 0x7F) < 3) {
-                    r *= 0.55f; g *= 0.55f; b *= 0.55f;
-                }
+                // RALLY CANYON (Warm terracotta, packed red clay raceway)
+                float clay = 185.0f + detailGrain * 40.0f;
+                r = Clamp(clay + 25.0f, 140.0f, 245.0f);
+                g = Clamp(clay * 0.55f, 70.0f, 140.0f);
+                b = Clamp(clay * 0.35f, 40.0f, 95.0f);
+            } else { // ACIDALIA_PLANITIA
+                // GOLDEN VELODROME DUNES (Warm sand ripples & desert varnish)
+                float sand = 210.0f + detailGrain * 35.0f;
+                r = Clamp(sand + 15.0f, 175.0f, 255.0f);
+                g = Clamp(sand * 0.78f, 130.0f, 210.0f);
+                b = Clamp(sand * 0.52f, 85.0f, 150.0f);
             }
 
             pixels[y * texW + x] = Color{
@@ -523,75 +377,66 @@ Color TerrainHeightfield::getSlopeColor(float slopeRad, Vector3 normal) const {
     float slopeDeg = slopeRad * RAD2DEG;
 
     Color base;
-    if (m_preset == TerrainPreset::SCREE_SLOPE) {
-        // Lunar Slope Shading: Pristine high-albedo regolith on flats, dark fractured scree on cliffs
-        if (slopeDeg < 14.0f) {
-            base = Color{ 245, 245, 250, 255 };
-        } else if (slopeDeg <= 28.0f) {
-            float t = (slopeDeg - 14.0f) / 14.0f;
+    if (m_preset == TerrainPreset::OLYMPUS_CRATER) {
+        // Lush Grassland Circuit: Green turf on flats, warm earth on banks, stone on crests
+        if (slopeDeg < 12.0f) {
+            base = Color{ 220, 250, 220, 255 };
+        } else if (slopeDeg <= 25.0f) {
+            float t = (slopeDeg - 12.0f) / 13.0f;
             base = Color{
-                static_cast<unsigned char>(Lerp(245, 160, t)),
-                static_cast<unsigned char>(Lerp(245, 160, t)),
-                static_cast<unsigned char>(Lerp(250, 170, t)),
+                static_cast<unsigned char>(Lerp(220, 190, t)),
+                static_cast<unsigned char>(Lerp(250, 175, t)),
+                static_cast<unsigned char>(Lerp(220, 140, t)),
                 255
             };
         } else {
-            float t = std::min(1.0f, (slopeDeg - 28.0f) / 14.0f);
+            base = Color{ 165, 160, 150, 255 }; // Rocky limestone
+        }
+    } else if (m_preset == TerrainPreset::SCREE_SLOPE) {
+        // Alpine Stone Pass
+        if (slopeDeg < 14.0f) {
+            base = Color{ 235, 240, 250, 255 };
+        } else {
+            float t = std::min(1.0f, (slopeDeg - 14.0f) / 18.0f);
             base = Color{
-                static_cast<unsigned char>(Lerp(160, 95, t)),
-                static_cast<unsigned char>(Lerp(160, 95, t)),
-                static_cast<unsigned char>(Lerp(170, 105, t)),
+                static_cast<unsigned char>(Lerp(235, 130, t)),
+                static_cast<unsigned char>(Lerp(240, 135, t)),
+                static_cast<unsigned char>(Lerp(250, 145, t)),
                 255
             };
         }
     } else if (m_preset == TerrainPreset::BOULDER_SLALOM) {
-        // Canyon Slalom Shading: Sunlit ochre wash on flats, dark layered rock on sheer walls
+        // Terracotta Rally Canyon
         if (slopeDeg < 14.0f) {
-            base = Color{ 255, 235, 215, 255 };
-        } else if (slopeDeg <= 28.0f) {
-            float t = (slopeDeg - 14.0f) / 14.0f;
-            base = Color{
-                static_cast<unsigned char>(Lerp(255, 175, t)),
-                static_cast<unsigned char>(Lerp(235, 130, t)),
-                static_cast<unsigned char>(Lerp(215, 110, t)),
-                255
-            };
+            base = Color{ 255, 225, 205, 255 };
         } else {
-            float t = std::min(1.0f, (slopeDeg - 28.0f) / 14.0f);
+            float t = std::min(1.0f, (slopeDeg - 14.0f) / 18.0f);
             base = Color{
-                static_cast<unsigned char>(Lerp(175, 110, t)),
-                static_cast<unsigned char>(Lerp(130, 75, t)),
-                static_cast<unsigned char>(Lerp(110, 60, t)),
+                static_cast<unsigned char>(Lerp(255, 160, t)),
+                static_cast<unsigned char>(Lerp(225, 95, t)),
+                static_cast<unsigned char>(Lerp(205, 65, t)),
                 255
             };
         }
-    } else {
-        // Standard Martian (Olympus / Acidalia): Fine dust plains, weathered bedrock, dark volcanic ridges
+    } else { // ACIDALIA_PLANITIA
+        // Golden Velodrome Dunes
         if (slopeDeg < 15.0f) {
-            base = Color{ 255, 245, 235, 255 };
-        } else if (slopeDeg <= 30.0f) {
-            float t = (slopeDeg - 15.0f) / 15.0f;
-            base = Color{
-                static_cast<unsigned char>(Lerp(255, 190, t)),
-                static_cast<unsigned char>(Lerp(245, 155, t)),
-                static_cast<unsigned char>(Lerp(235, 135, t)),
-                255
-            };
+            base = Color{ 255, 245, 225, 255 };
         } else {
-            float t = std::min(1.0f, (slopeDeg - 30.0f) / 15.0f);
+            float t = std::min(1.0f, (slopeDeg - 15.0f) / 18.0f);
             base = Color{
-                static_cast<unsigned char>(Lerp(190, 125, t)),
-                static_cast<unsigned char>(Lerp(155, 95, t)),
-                static_cast<unsigned char>(Lerp(135, 80, t)),
+                static_cast<unsigned char>(Lerp(255, 180, t)),
+                static_cast<unsigned char>(Lerp(245, 145, t)),
+                static_cast<unsigned char>(Lerp(225, 105, t)),
                 255
             };
         }
     }
 
-    // Directional solar lighting with soft ambient fill for crisp topography relief
+    // Solar lighting for crisp topography relief
     Vector3 sunDir = Vector3Normalize(Vector3{ 0.4f, 0.85f, 0.35f });
     float diffuse = std::max(0.0f, Vector3DotProduct(normal, sunDir));
-    float lightFactor = 0.42f + 0.58f * diffuse; // Ambient + Diffuse
+    float lightFactor = 0.44f + 0.56f * diffuse;
 
     return Color{
         static_cast<unsigned char>(Clamp(base.r * lightFactor, 0.0f, 255.0f)),

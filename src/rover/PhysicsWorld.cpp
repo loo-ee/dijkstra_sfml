@@ -267,7 +267,9 @@ JPH::BodyID PhysicsWorld::createChunkHeightField(const float* heightData, int re
 void PhysicsWorld::removeChunkHeightField(JPH::BodyID bodyId) {
     if (!m_initialized || bodyId.IsInvalid()) return;
     JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
-    bodyInterface.RemoveBody(bodyId);
+    if (bodyInterface.IsAdded(bodyId)) {
+        bodyInterface.RemoveBody(bodyId);
+    }
     bodyInterface.DestroyBody(bodyId);
 }
 
@@ -276,7 +278,9 @@ void PhysicsWorld::clearBoulders() {
     JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
     for (const auto& b : m_boulders) {
         if (!b.bodyId.IsInvalid()) {
-            bodyInterface.RemoveBody(b.bodyId);
+            if (bodyInterface.IsAdded(b.bodyId)) {
+                bodyInterface.RemoveBody(b.bodyId);
+            }
             bodyInterface.DestroyBody(b.bodyId);
         }
     }
@@ -308,15 +312,16 @@ JPH::BodyID PhysicsWorld::spawnBoulder(Vector3 pos, float radius) {
 bool PhysicsWorld::removeBoulder(JPH::BodyID bodyId) {
     if (!m_initialized || bodyId.IsInvalid()) return false;
 
-    JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
-    bodyInterface.RemoveBody(bodyId);
-    bodyInterface.DestroyBody(bodyId);
-
-    auto it = std::remove_if(m_boulders.begin(), m_boulders.end(), [bodyId](const BoulderInfo& b) {
+    auto it = std::find_if(m_boulders.begin(), m_boulders.end(), [bodyId](const BoulderInfo& b) {
         return b.bodyId == bodyId;
     });
     if (it != m_boulders.end()) {
-        m_boulders.erase(it, m_boulders.end());
+        JPH::BodyInterface& bodyInterface = m_physicsSystem.GetBodyInterface();
+        if (bodyInterface.IsAdded(bodyId)) {
+            bodyInterface.RemoveBody(bodyId);
+        }
+        bodyInterface.DestroyBody(bodyId);
+        m_boulders.erase(it);
         return true;
     }
     return false;

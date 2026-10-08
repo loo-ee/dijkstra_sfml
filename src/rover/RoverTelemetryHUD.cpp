@@ -30,12 +30,13 @@ void RoverTelemetryHUD::draw(const PlanetaryRover& rover, int screenW, int scree
     // -----------------------------------------------------------------
     // 1. HEADER: Title & Autonomy Status Badge
     // -----------------------------------------------------------------
-    DrawText("PLANETARY ROVER TELEMETRY", cardX + 16, cardY + 12, 13, RAYWHITE);
+    DrawText("VEHICLE TELEMETRY & NAVIGATION", cardX + 16, cardY + 12, 13, RAYWHITE);
 
     // Camera Mode Pill (Clickable/Toggleable with V)
-    const char* camStr = "CAM: ORBIT";
+    const char* camStr = "CAM: TOP-DOWN (2D)";
     if (rover.getCameraMode() == RoverCameraMode::CHASE) camStr = "CAM: CHASE (3P)";
-    else if (rover.getCameraMode() == RoverCameraMode::MAST) camStr = "CAM: MAST (1P)";
+    else if (rover.getCameraMode() == RoverCameraMode::MAST) camStr = "CAM: HOOD (1P)";
+    else if (rover.getCameraMode() == RoverCameraMode::ORBIT) camStr = "CAM: ORBIT";
 
     int camW = MeasureText(camStr, 10) + 12;
     Rectangle camRect = { (float)(cardX + cardW - camW - 14), (float)(cardY + 11), (float)camW, 18.0f };

@@ -20,6 +20,9 @@ public:
 
     void init(const TerrainHeightfield& generator, PhysicsWorld& physics);
     void update(Vector3 roverPos, const TerrainHeightfield& generator, PhysicsWorld& physics);
+    void update(Vector3 roverPos, Vector3 /*camTargetPos*/, const TerrainHeightfield& generator, PhysicsWorld& physics) {
+        update(roverPos, generator, physics);
+    }
     void draw(bool wireframe = false) const;
     void clear(PhysicsWorld& physics);
 
@@ -27,8 +30,8 @@ public:
     Vector3 getNormal(float worldX, float worldZ, const TerrainHeightfield& generator) const;
 
     int getActiveChunkCount() const { return static_cast<int>(m_activeChunks.size()); }
-    int getCurrentCenterCX() const { return m_currentCenterCX; }
-    int getCurrentCenterCZ() const { return m_currentCenterCZ; }
+    int getCurrentCenterCX() const { return m_currentRoverCX; }
+    int getCurrentCenterCZ() const { return m_currentRoverCZ; }
 
     bool isInitialized() const { return m_initialized; }
 
@@ -39,8 +42,8 @@ private:
 
     std::unordered_map<int64_t, std::unique_ptr<TerrainChunk>> m_activeChunks;
     Texture2D m_sharedTexture = {};
-    int m_currentCenterCX = 999999;
-    int m_currentCenterCZ = 999999;
-    int m_radius = 3; // 7x7 active grid (49 chunks = 448m x 448m coverage)
+    int m_currentRoverCX = 999999;
+    int m_currentRoverCZ = 999999;
+    int m_radius = 3; // 7x7 grid = 49 high-detail chunks (448m x 448m) around vehicle
     bool m_initialized = false;
 };

@@ -35,20 +35,25 @@ static void ApplyTerrainPreset(
     PlanetaryRover& rover,
     int& blockedEdgeCount
 ) {
+    // 1. Unload active chunks first while old texture and physics bodies are still valid
+    if (infiniteWorldMode) {
+        chunkMgr.clear(physics);
+    }
+
+    physics.clearBoulders();
+    physics.clearDynamicSpheres();
+    navGraph.clear();
+
     s_activeTerrain = &terrain;
     terrain.setPreset(preset);
     terrain.generate();
 
     navGraph.setPhysicsWorld(&physics);
 
-    // Set realistic gravity for this planetary environment (Mars: 3.71, Moon: 1.62, Earth: 9.81)
+    // Set realistic gravity for this driving environment (Earth: -9.81 m/s²)
     physics.setGravity(terrain.getPresetGravity());
 
-    physics.clearBoulders();
-    physics.clearDynamicSpheres();
-
     if (infiniteWorldMode) {
-        chunkMgr.clear(physics);
         chunkMgr.init(terrain, physics);
         chunkMgr.update(Vector3{ 0.0f, 0.0f, 0.0f }, terrain, physics);
     } else {
@@ -69,45 +74,25 @@ static void ApplyTerrainPreset(
 
     if (preset == TerrainPreset::OLYMPUS_CRATER) {
         boulders = {
-            { { 18.0f, -10.0f }, 3.5f },  // Inside primary crater
-            { { 32.0f, -22.0f }, 2.8f },  // On crater rim
-            { { -15.0f, 12.0f }, 3.2f },  // On open plain
-            { { -30.0f, -25.0f }, 4.0f }, // Large obstacle
-            { { 5.0f, 35.0f }, 2.5f },
-            { { -40.0f, 28.0f }, 3.0f },  // Near secondary crater
-            { { -55.0f, -10.0f }, 2.6f },
-            { { 45.0f, 20.0f }, 3.4f },
-            { { 10.0f, -45.0f }, 3.0f },
-            { { -10.0f, -60.0f }, 3.8f }
+            { { 45.0f, -40.0f }, 2.0f },
+            { { -60.0f, 50.0f }, 2.2f },
+            { { -45.0f, -60.0f }, 2.5f }
         };
     } else if (preset == TerrainPreset::SCREE_SLOPE) {
         boulders = {
-            { { -20.0f, 10.0f }, 3.0f },
-            { { -10.0f, -20.0f }, 3.5f },
-            { { 15.0f, -5.0f }, 2.8f },
-            { { 25.0f, 25.0f }, 3.2f },
-            { { -35.0f, 30.0f }, 2.6f },
-            { { 0.0f, 40.0f }, 3.4f },
-            { { 40.0f, -30.0f }, 2.9f }
+            { { -50.0f, 40.0f }, 2.2f },
+            { { 60.0f, -50.0f }, 2.0f }
         };
     } else if (preset == TerrainPreset::BOULDER_SLALOM) {
-        // Natural slalom gates along the canyon floor
         boulders = {
-            { { -10.0f, -50.0f }, 3.2f },
-            { { 12.0f, -30.0f }, 3.5f },
-            { { -8.0f, -10.0f }, 3.2f },
-            { { 14.0f, 10.0f }, 3.6f },
-            { { -12.0f, 30.0f }, 3.4f },
-            { { 8.0f, 50.0f }, 3.5f },
-            { { -25.0f, 0.0f }, 4.0f },
-            { { 28.0f, -20.0f }, 4.0f }
+            { { -28.0f, -50.0f }, 2.2f },
+            { { 30.0f, -30.0f }, 2.4f },
+            { { -28.0f, 30.0f }, 2.2f }
         };
     } else { // ACIDALIA_PLANITIA
         boulders = {
-            { { 20.0f, 20.0f }, 2.4f },
-            { { -30.0f, -25.0f }, 2.8f },
-            { { 40.0f, -40.0f }, 2.2f },
-            { { -15.0f, 45.0f }, 2.5f }
+            { { 55.0f, 55.0f }, 1.8f },
+            { { -55.0f, -55.0f }, 2.0f }
         };
     }
 
@@ -118,34 +103,31 @@ static void ApplyTerrainPreset(
         physics.spawnBoulder(boulderPos, bp.radius);
     }
 
-    // Procedural Planetary Rock Fields (Spanning radius up to 620m across the entire planetary surface)
+    // Sparse roadside landscape boulders
     uint32_t seed = 42 + static_cast<uint32_t>(preset) * 1337;
     auto pseudoRand = [&seed]() {
         seed = seed * 1664525u + 1013904223u;
         return static_cast<float>(seed & 0xFFFF) / 65535.0f;
     };
 
-    const int numProceduralBoulders = 140;
+    const int numProceduralBoulders = 12;
     for (int i = 0; i < numProceduralBoulders; ++i) {
         float angle = pseudoRand() * 2.0f * PI;
-        float dist = 20.0f + sqrtf(pseudoRand()) * 600.0f;
+        float dist = 45.0f + sqrtf(pseudoRand()) * 300.0f;
         float bx = dist * cosf(angle);
         float bz = dist * sinf(angle);
 
-        // Don't spawn rocks directly on top of the rover start point
-        if (sqrtf(bx * bx + bz * bz) < 14.0f) continue;
-
         float slope = terrain.getSlopeAngleRad(bx, bz);
-        if (slope < 22.0f * DEG2RAD) {
-            float radius = 1.6f + pseudoRand() * 2.6f; // Radii from 1.6m to 4.2m
+        if (slope < 16.0f * DEG2RAD) {
+            float radius = 1.2f + pseudoRand() * 1.2f;
             float by = terrain.getHeight(bx, bz);
             Vector3 bPos = { bx, by + radius * 0.70f, bz };
             physics.spawnBoulder(bPos, radius);
         }
     }
 
-    // Lazy-Loaded Discovery: Unveil local exploration network around landing site (radius 110m, spacing 12m)
-    navGraph.generatePersistentPlanetaryGrid(terrain, Vector3{ 0.0f, 0.0f, 0.0f }, 110.0f, 12.0f);
+    // Lazy-Loaded Discovery: Unveil local exploration network around landing site (radius 150m, spacing 12m)
+    navGraph.generatePersistentPlanetaryGrid(terrain, Vector3{ 0.0f, 0.0f, 0.0f }, 150.0f, 12.0f);
     navGraph.validateEdgesWithPhysics(physics, 0.6f);
 
     blockedEdgeCount = 0;
@@ -166,6 +148,12 @@ static void ApplyTerrainPreset(
         }
         rover.reset(physics, navGraph.getStartNode()->position, startYaw);
         rover.setPath(path);
+    } else {
+        rover.reset(physics, Vector3{ 0.0f, terrain.getHeight(0.0f, 0.0f) + 1.0f, 0.0f }, 0.0f);
+    }
+
+    if (infiniteWorldMode) {
+        chunkMgr.update(rover.getPosition(), terrain, physics);
     }
 }
 
@@ -175,12 +163,12 @@ int main() {
     const int screenHeight = 720;
 
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
-    InitWindow(screenWidth, screenHeight, "3D Planetary Rover Simulator - Martian Terrain & Physics");
+    InitWindow(screenWidth, screenHeight, "3D Driving Simulator - Procedural Chunks & Physics");
     SetTargetFPS(60);
 
-    // 2. Camera Setup (Panoramic overview of Martian terrain)
+    // 2. Camera Setup (Overview camera)
     OrbitCameraController cameraController(
-        Vector3{ 0.0f, 75.0f, 115.0f },
+        Vector3{ 0.0f, 40.0f, 25.0f },
         Vector3{ 0.0f, 0.0f, 0.0f },
         45.0f
     );
@@ -189,12 +177,12 @@ int main() {
     PhysicsWorld physics;
     physics.init();
 
-    // 4. Procedural Martian Terrain Heightfield (Full 1,440m planetary globe physics coverage)
+    // 4. Procedural Terrain Heightfield
     TerrainHeightfield terrain(256, 1440.0f);
 
-    // 5. Infinite Procedural Chunk Manager
+    // 5. Infinite Procedural Chunk Manager (Default procedural chunk streaming)
     ChunkManager chunkMgr;
-    bool infiniteWorldMode = false;
+    bool infiniteWorldMode = true;
 
     // 6. 3D NavGraph
     RoverNavGraph navGraph;
@@ -245,24 +233,36 @@ int main() {
         // Update Autonomous Planetary Rover & Pure Pursuit Navigation
         rover.update(physics, dt, &terrain);
 
-        // Lazy-Loaded Dynamic Exploration Discovery:
-        // As rover or camera moves into undiscovered areas, lazily unveil new nodes (radius 96m)
-        // while preserving all previously discovered nodes and areas with 60 FPS performance!
-        Vector3 explorationCenter = (rover.getCameraMode() == RoverCameraMode::ORBIT)
-                                    ? cameraController.getCamera().target
-                                    : rover.getPosition();
+        // Continuous Procedural Chunk Streaming around Vehicle
+        if (infiniteWorldMode) {
+            chunkMgr.update(rover.getPosition(), terrain, physics);
+        }
 
-        static Vector3 lastLazyDiscoveryPos = Vector3{ 0.0f, 0.0f, 0.0f };
+        // Lazy-Loaded Dynamic Exploration Discovery:
+        // As camera pans in Orbit mode OR rover drives into undiscovered areas, lazily unveil new nodes (radius 100m)
+        // so the user can freely select and click any destination node!
+        Vector3 roverPos = rover.getPosition();
+        Vector3 camTarget = (rover.getCameraMode() == RoverCameraMode::ORBIT)
+                            ? cameraController.getCamera().target
+                            : roverPos;
+
+        static Vector3 lastRoverDiscoveryPos = Vector3{ 0.0f, 0.0f, 0.0f };
+        static Vector3 lastCamDiscoveryPos = Vector3{ 0.0f, 0.0f, 0.0f };
         static float lastDiscoveryTime = 0.0f;
         float now = static_cast<float>(GetTime());
 
-        float distFromLastLazy = Vector3Distance(explorationCenter, lastLazyDiscoveryPos);
-        if (distFromLastLazy > 24.0f && (now - lastDiscoveryTime > 0.20f)) {
-            lastLazyDiscoveryPos = explorationCenter;
-            lastDiscoveryTime = now;
-            navGraph.generatePersistentPlanetaryGrid(terrain, explorationCenter, 96.0f, 12.0f);
-            if (infiniteWorldMode) {
-                chunkMgr.update(explorationCenter, terrain, physics);
+        float distCam = Vector3Distance(camTarget, lastCamDiscoveryPos);
+        float distRover = Vector3Distance(roverPos, lastRoverDiscoveryPos);
+
+        if (now - lastDiscoveryTime > 0.20f) {
+            if (rover.getCameraMode() == RoverCameraMode::ORBIT && distCam > 28.0f) {
+                lastCamDiscoveryPos = camTarget;
+                lastDiscoveryTime = now;
+                navGraph.generatePersistentPlanetaryGrid(terrain, camTarget, 100.0f, 12.0f);
+            } else if (distRover > 30.0f) {
+                lastRoverDiscoveryPos = roverPos;
+                lastDiscoveryTime = now;
+                navGraph.generatePersistentPlanetaryGrid(terrain, roverPos, 100.0f, 12.0f);
             }
         }
 
@@ -373,7 +373,7 @@ int main() {
         Vertex3D* hoveredNode = nullptr;
         if (!isOverUI) {
             Ray mouseRay = GetMouseRay(mousePos, activeCamera);
-            hoveredNode = navGraph.pickNodeFromRay(mouseRay, 1.8f);
+            hoveredNode = navGraph.pickNodeFromRay(mouseRay, 2.4f);
 
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 if (hoveredNode) {
@@ -411,9 +411,14 @@ int main() {
             isLeftDragging = false;
         }
 
-        // Update Orbital Camera with Globe Surface Rotation (anchored to physical planetary sphere)
+        // Update Active Camera Controls
         if (rover.getCameraMode() == RoverCameraMode::ORBIT) {
             cameraController.update(isOverUI, SampleActiveTerrainHeight, isLeftDragging);
+        } else if (rover.getCameraMode() == RoverCameraMode::TOP_DOWN && !isOverUI) {
+            float wheel = GetMouseWheelMove();
+            if (wheel != 0.0f) {
+                rover.adjustTopDownZoom(wheel);
+            }
         }
 
         // Real-Time Smart Cost Selector Engine (Adapts weights dynamically to Battery % and Terrain Topography)
@@ -494,6 +499,7 @@ int main() {
         if (IsKeyPressed(KEY_F)) {
             cameraController.focusOn(rover.getPosition(), 22.0f);
         }
+
         if (IsKeyPressed(KEY_M)) {
             terrain.cyclePreset();
             ApplyTerrainPreset(terrain.getPreset(), terrain, chunkMgr, infiniteWorldMode, physics, navGraph, dijkstra, rover, blockedEdgeCount);
@@ -515,7 +521,7 @@ int main() {
         }
         if (IsKeyPressed(KEY_R)) {
             if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) {
-                cameraController.reset(Vector3{ 0.0f, 75.0f, 115.0f }, Vector3{ 0.0f, 0.0f, 0.0f });
+                cameraController.reset(Vector3{ 0.0f, 40.0f, 25.0f }, Vector3{ 0.0f, 0.0f, 0.0f });
             } else if (navGraph.getStartNode()) {
                 const auto& path = dijkstra.getShortestPathNodes();
                 float startYaw = 0.0f;
@@ -622,15 +628,15 @@ int main() {
         // Render Frame
         BeginDrawing();
 
-        // 1. Explicitly clear Color and Depth buffers (essential for 3D camera rotation)
-        ClearBackground(Color{ 12, 14, 24, 255 });
+        // 1. Explicitly clear Color and Depth buffers
+        ClearBackground(Color{ 16, 20, 30, 255 });
 
         // 2. Atmospheric Sky Gradient (2D background with depth testing disabled)
         rlDisableDepthMask();
         rlDisableDepthTest();
         DrawRectangleGradientV(0, 0, GetRenderWidth(), GetRenderHeight(), 
-            Color{ 10, 12, 22, 255 }, 
-            Color{ 118, 62, 45, 255 }
+            Color{ 18, 26, 42, 255 }, 
+            Color{ 80, 115, 155, 255 }
         );
         rlEnableDepthTest();
         rlEnableDepthMask();
@@ -640,27 +646,25 @@ int main() {
         // 3D Scene Rendering
         BeginMode3D(activeCamera);
         {
-            // A. Distant Martian Sun (pale blue disk with soft atmospheric halo)
-            DrawSphere(sunPosition, 6.5f, Color{ 195, 230, 255, 255 });
-            DrawSphereWires(sunPosition, 10.0f, 8, 8, ColorAlpha(Color{ 150, 205, 255, 255 }, 0.45f));
+            // A. Sun (warm bright disk with soft atmospheric halo)
+            DrawSphere(sunPosition, 6.5f, Color{ 255, 242, 215, 255 });
+            DrawSphereWires(sunPosition, 10.0f, 8, 8, ColorAlpha(Color{ 255, 225, 160, 255 }, 0.45f));
 
-            // B. Draw Procedural Martian Planetary Globe Mesh (1,440m circular sphere)
-            if (showTerrain && terrain.isLoaded()) {
-                rlDisableBackfaceCulling();
-                DrawModel(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, WHITE);
-                rlEnableBackfaceCulling();
+            // B. Draw Procedural Terrain (Continuous 1.44km Base Horizon + Detailed Local Chunks)
+            if (showTerrain) {
+                // 1. Vast 1.44km Base Terrain Horizon (guarantees solid continuous terrain to the horizon from any high camera angle)
+                if (terrain.isLoaded()) {
+                    rlDisableBackfaceCulling();
+                    DrawModel(terrain.getModel(), Vector3{ 0.0f, -0.06f, 0.0f }, 1.0f, WHITE);
+                    rlEnableBackfaceCulling();
+                }
 
-                if (showWireframe) {
+                // 2. High-Resolution Procedural Flat Terrain Chunks on top
+                if (infiniteWorldMode && chunkMgr.isInitialized()) {
+                    chunkMgr.draw(showWireframe);
+                } else if (!infiniteWorldMode && showWireframe && terrain.isLoaded()) {
                     DrawModelWires(terrain.getModel(), Vector3{ 0.0f, 0.0f, 0.0f }, 1.0f, ColorAlpha(BLACK, 0.2f));
                 }
-
-                if (infiniteWorldMode) {
-                    chunkMgr.draw(showWireframe);
-                }
-
-                // Curved Atmospheric Horizon Glow Ring (Spherical Horizon Silhouette)
-                DrawCircle3D(Vector3{ 0.0f, -220.0f, 0.0f }, 725.0f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 210, 115, 75, 255 }, 0.40f));
-                DrawCircle3D(Vector3{ 0.0f, -224.0f, 0.0f }, 738.0f, Vector3{ 0, 1, 0 }, 90.0f, ColorAlpha(Color{ 180, 85, 55, 255 }, 0.20f));
             }
 
             // C. Draw Static Boulders (Craggy rock shading with sunlit facets and distance LOD)
@@ -734,7 +738,7 @@ int main() {
                         continue; // Skip rendering distant nodes
                     }
 
-                    float surfY = terrain.getHeight(v->position.x, v->position.z);
+                    float surfY = v->position.y - 0.40f;
                     Vector3 baseAnchor = { v->position.x, surfY + 0.05f, v->position.z };
 
                     if (v->state == NodeState::IMPASSABLE) {

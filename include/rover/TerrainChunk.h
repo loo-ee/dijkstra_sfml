@@ -20,7 +20,9 @@ public:
     TerrainChunk(const TerrainChunk&) = delete;
     TerrainChunk& operator=(const TerrainChunk&) = delete;
 
-    void generate(const TerrainHeightfield& generator, PhysicsWorld& physics, Texture2D sharedTexture);
+    void generate(const TerrainHeightfield& generator, Texture2D sharedTexture);
+    void ensurePhysics(PhysicsWorld& physics, const TerrainHeightfield& generator);
+    void removePhysics(PhysicsWorld& physics);
     void unload(PhysicsWorld& physics);
     void draw(bool wireframe = false) const;
 
@@ -29,6 +31,7 @@ public:
     float getOriginX() const { return m_originX; }
     float getOriginZ() const { return m_originZ; }
     bool isLoaded() const { return m_isLoaded; }
+    bool hasPhysics() const { return !m_physicsBodyId.IsInvalid(); }
 
     float getHeight(float worldX, float worldZ) const;
     const std::vector<float>& getHeightData() const { return m_heightData; }

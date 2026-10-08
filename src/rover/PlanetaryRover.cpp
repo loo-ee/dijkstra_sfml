@@ -57,9 +57,13 @@ PlanetaryRover::PlanetaryRover()
     , m_isAtStandoffVantage(false)
     , m_standoffTimer(0.0f)
     , m_isDirectHoming(false)
-    , m_cameraMode(RoverCameraMode::ORBIT)
+    , m_cameraMode(RoverCameraMode::TOP_DOWN)
     , m_chaseCamPos{ 0, 10, -10 }
     , m_chaseCamTarget{ 0, 0, 0 }
+    , m_topDownCamPos{ 0, 32, 0 }
+    , m_topDownCamTarget{ 0, 0, 0 }
+    , m_topDownUp{ 0, 0, 1 }
+    , m_topDownZoom(32.0f)
 {
     // Mount positions in local chassis coordinate system:
     // Local: +X = Right, +Y = Up, +Z = Forward
@@ -162,6 +166,11 @@ void PlanetaryRover::reset(PhysicsWorld& physics, Vector3 spawnPos, float yawAng
     m_chaseCamPos = Vector3Subtract(m_position, Vector3Scale(m_forward, 6.5f));
     m_chaseCamPos.y += 3.0f;
     m_chaseCamTarget = m_position;
+
+    m_topDownCamPos = Vector3Add(m_position, Vector3{ 0.0f, m_topDownZoom, 0.0f });
+    m_topDownCamTarget = m_position;
+    m_topDownUp = Vector3Normalize(Vector3{ m_forward.x, 0.0f, m_forward.z });
+    if (Vector3LengthSqr(m_topDownUp) < 0.01f) m_topDownUp = Vector3{ 0.0f, 0.0f, 1.0f };
 }
 
 void PlanetaryRover::setPath(const std::vector<const Vertex3D*>& pathNodes, bool isPartial, float standoffDist, Vector3 finalGoalPos) {
@@ -226,12 +235,14 @@ void PlanetaryRover::engageDirectHoming(Vector3 targetPos) {
 }
 
 void PlanetaryRover::cycleCameraMode() {
-    if (m_cameraMode == RoverCameraMode::ORBIT) {
+    if (m_cameraMode == RoverCameraMode::TOP_DOWN) {
         m_cameraMode = RoverCameraMode::CHASE;
     } else if (m_cameraMode == RoverCameraMode::CHASE) {
         m_cameraMode = RoverCameraMode::MAST;
-    } else {
+    } else if (m_cameraMode == RoverCameraMode::MAST) {
         m_cameraMode = RoverCameraMode::ORBIT;
+    } else {
+        m_cameraMode = RoverCameraMode::TOP_DOWN;
     }
 }
 
@@ -241,6 +252,32 @@ Camera3D PlanetaryRover::getCamera(const Camera3D& orbitCamera) const {
     }
 
     Camera3D cam = {};
+
+    if (m_cameraMode == RoverCameraMode::TOP_DOWN) {
+        // Option A: Car-Aligned 2D Top-Down Racer Camera (Perspective, Heading = UP on screen)
+        float altitude = m_topDownZoom;
+        float leadForward = 5.0f; // Look ahead along vehicle heading
+
+        Vector3 targetPos = Vector3Add(m_position, Vector3Scale(m_forward, leadForward));
+        Vector3 desiredCamPos = Vector3Add(targetPos, Vector3{ 0.0f, altitude, 0.0f });
+
+        // Vector pointing forward on horizontal plane defines the UP direction on screen
+        Vector3 forwardXZ = Vector3Normalize(Vector3{ m_forward.x, 0.0f, m_forward.z });
+        if (Vector3LengthSqr(forwardXZ) < 0.01f) forwardXZ = Vector3{ 0.0f, 0.0f, 1.0f };
+
+        // Smooth camera damping to avoid road jitter
+        m_topDownCamPos = Vector3Lerp(m_topDownCamPos, desiredCamPos, 0.16f);
+        m_topDownCamTarget = Vector3Lerp(m_topDownCamTarget, targetPos, 0.18f);
+        m_topDownUp = Vector3Normalize(Vector3Lerp(m_topDownUp, forwardXZ, 0.16f));
+
+        cam.position = m_topDownCamPos;
+        cam.target = m_topDownCamTarget;
+        cam.up = m_topDownUp;
+        cam.fovy = 50.0f;
+        cam.projection = CAMERA_PERSPECTIVE;
+        return cam;
+    }
+
     cam.up = Vector3{ 0.0f, 1.0f, 0.0f };
 
     if (m_cameraMode == RoverCameraMode::CHASE) {
@@ -598,7 +635,7 @@ void PlanetaryRover::updatePurePursuit(PhysicsWorld& physics, float dt) {
     // -------------------------------------------------------------
     // Step 4: Speed Regulation, Downhill HDC, & Anti-Stuck
     // -------------------------------------------------------------
-    float cruiseSpeed = 3.8f; // ~13.7 km/h cruise
+    float cruiseSpeed = 7.5f; // ~27 km/h cruise for driving simulator
 
     // Turn slowdown
     float steerPenalty = 1.0f - 0.55f * (fabsf(m_steerInput) / 0.62f);
